@@ -6,6 +6,7 @@ class AdminStates(StatesGroup):
     waiting_for_new_admin_role = State()
     waiting_for_file = State()
     waiting_for_delete_event = State()
+    waiting_for_scan_criteria = State()
 
 class UserStates(StatesGroup):
     waiting_for_search = State()

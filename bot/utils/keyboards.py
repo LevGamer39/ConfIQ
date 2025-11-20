@@ -184,3 +184,37 @@ def get_audience_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔬 Исследователи", callback_data="select_audience_researchers")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="criteria_back")]
     ])
+
+def get_scan_type_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🔍 Базовое сканирование")],
+        [KeyboardButton(text="🎯 Расширенное сканирование")],
+        [KeyboardButton(text="📋 Выборочное сканирование")],
+        [KeyboardButton(text="❌ Отменить")]
+    ], resize_keyboard=True)
+
+def get_scan_themes_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Искусственный интеллект", callback_data="scan_theme_ai")],
+        [InlineKeyboardButton(text="📊 Data Science", callback_data="scan_theme_data_science")],
+        [InlineKeyboardButton(text="💻 Разработка", callback_data="scan_theme_development")],
+        [InlineKeyboardButton(text="🎯 IT-менеджмент", callback_data="scan_theme_management")],
+        [InlineKeyboardButton(text="🔐 Кибербезопасность", callback_data="scan_theme_security")],
+        [InlineKeyboardButton(text="☁️ Облачные технологии", callback_data="scan_theme_cloud")],
+        [
+            InlineKeyboardButton(text="✅ Все темы", callback_data="scan_theme_all"),
+            InlineKeyboardButton(text="🚀 Запуск", callback_data="scan_theme_confirm")
+        ]
+    ])
+
+def get_scan_sources_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌐 IT Event Hub", callback_data="scan_source_it_event_hub")],
+        [InlineKeyboardButton(text="👥 IT HR Hub", callback_data="scan_source_it_hr_hub")],
+        [InlineKeyboardButton(text="🏛️ SPb Prompt", callback_data="scan_source_spb_prompt")],
+        [InlineKeyboardButton(text="📅 All Events", callback_data="scan_source_all_events")],
+        [
+            InlineKeyboardButton(text="✅ Все источники", callback_data="scan_source_all"),
+            InlineKeyboardButton(text="🚀 Запуск", callback_data="scan_source_confirm")
+        ]
+    ])

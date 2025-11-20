@@ -217,27 +217,183 @@ async def back_to_panel(message: types.Message, db: FDataBase):
     await admin_panel(message, db)
 
 @router.message(lambda msg: msg.text and msg.text == "🔄 Сканировать источники")
-async def start_scan(message: types.Message, db: FDataBase, gigachat, parser):
+async def scan_sources_start(message: types.Message, state: FSMContext, db: FDataBase):
     if not check_access(message, db): 
         return
         
-    await message.answer("🔍 <b>Запуск сканирования источников...</b>\n<i>Это может занять некоторое время</i>", parse_mode="HTML")
+    await state.set_state(AdminStates.waiting_for_scan_criteria)
+    await message.answer(
+        "🔍 <b>Сканирование источников</b>\n\n"
+        "Выберите критерии для сканирования:\n"
+        "• Базовое сканирование - все IT-мероприятия\n"
+        "• Расширенное - с выбором тематик\n"
+        "• Выборочное - конкретные источники",
+        parse_mode="HTML",
+        reply_markup=get_scan_type_keyboard()
+    )
+
+@router.message(AdminStates.waiting_for_scan_criteria)
+async def scan_type_handler(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("❌ Сканирование отменено.", reply_markup=get_admin_keyboard())
+        return
+    
+    if message.text == "🔍 Базовое сканирование":
+        await state.update_data(scan_type="basic", themes=[], sources=[])
+        await start_scan_process(message, state, db)
+        return
+        
+    elif message.text == "🎯 Расширенное сканирование":
+        await message.answer(
+            "🎯 <b>Выберите тематики для сканирования:</b>",
+            parse_mode="HTML",
+            reply_markup=get_scan_themes_keyboard()
+        )
+        return
+        
+    elif message.text == "📋 Выборочное сканирование":
+        await message.answer(
+            "📋 <b>Выберите источники для сканирования:</b>",
+            parse_mode="HTML",
+            reply_markup=get_scan_sources_keyboard()
+        )
+        return
+    
+    await message.answer("❌ Выберите тип сканирования из меню:")
+
+@router.callback_query(AdminStates.waiting_for_scan_criteria, F.data.startswith("scan_theme_"))
+async def scan_theme_handler(callback: types.CallbackQuery, state: FSMContext):
+    theme = callback.data.replace("scan_theme_", "")
+    
+    data = await state.get_data()
+    selected_themes = data.get('themes', [])
+    
+    if theme == "confirm":
+        if not selected_themes:
+            await callback.answer("❌ Выберите хотя бы одну тематику")
+            return
+            
+        await state.update_data(scan_type="advanced", sources=[])
+        await callback.message.edit_text(
+            f"🎯 <b>Выбраны тематики:</b>\n{', '.join([get_theme_display_name(t) for t in selected_themes])}\n\n"
+            "Запускаю расширенное сканирование...",
+            parse_mode="HTML"
+        )
+        await start_scan_process(callback.message, state, callback.message.bot.get("db"))
+        return
+        
+    elif theme == "all":
+        selected_themes = ["ai", "data_science", "development", "management", "security", "cloud"]
+    else:
+        if theme in selected_themes:
+            selected_themes.remove(theme)
+        else:
+            selected_themes.append(theme)
+    
+    await state.update_data(themes=selected_themes)
+    
+    themes_text = "\n".join([f"✅ {get_theme_display_name(t)}" for t in selected_themes]) if selected_themes else "❌ Не выбрано"
+    
+    await callback.message.edit_text(
+        f"🎯 <b>Выберите тематики для сканирования:</b>\n\n{themes_text}",
+        parse_mode="HTML",
+        reply_markup=get_scan_themes_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(AdminStates.waiting_for_scan_criteria, F.data.startswith("scan_source_"))
+async def scan_source_handler(callback: types.CallbackQuery, state: FSMContext):
+    source = callback.data.replace("scan_source_", "")
+    
+    data = await state.get_data()
+    selected_sources = data.get('sources', [])
+    
+    if source == "confirm":
+        if not selected_sources:
+            await callback.answer("❌ Выберите хотя бы один источник")
+            return
+            
+        await state.update_data(scan_type="selective", themes=[])
+        await callback.message.edit_text(
+            f"📋 <b>Выбраны источники:</b>\n{', '.join([get_source_display_name(s) for s in selected_sources])}\n\n"
+            "Запускаю выборочное сканирование...",
+            parse_mode="HTML"
+        )
+        await start_scan_process(callback.message, state, callback.message.bot.get("db"))
+        return
+        
+    elif source == "all":
+        selected_sources = ["it_event_hub", "it_hr_hub", "spb_prompt", "all_events"]
+    else:
+        if source in selected_sources:
+            selected_sources.remove(source)
+        else:
+            selected_sources.append(source)
+    
+    await state.update_data(sources=selected_sources)
+    
+    sources_text = "\n".join([f"✅ {get_source_display_name(s)}" for s in selected_sources]) if selected_sources else "❌ Не выбрано"
+    
+    await callback.message.edit_text(
+        f"📋 <b>Выберите источники для сканирования:</b>\n\n{sources_text}",
+        parse_mode="HTML",
+        reply_markup=get_scan_sources_keyboard()
+    )
+    await callback.answer()
+
+async def start_scan_process(message: types.Message, state: FSMContext, db: FDataBase):
+    data = await state.get_data()
+    scan_type = data.get('scan_type', 'basic')
+    themes = data.get('themes', [])
+    sources = data.get('sources', [])
+    
+    await state.clear()
+    
+    gigachat = message.bot.get("gigachat")
+    parser = message.bot.get("parser")
+    
+    await message.answer(
+        f"🔍 <b>Запуск {get_scan_type_display_name(scan_type)}...</b>\n"
+        f"<i>Это может занять некоторое время</i>",
+        parse_mode="HTML"
+    )
     
     try:
         loop = asyncio.get_running_loop()
+        
+        if scan_type == "selective" and sources:
+            original_sources = parser.sources.copy()
+            parser.sources = [s for s in parser.sources if s['name'].replace(' ', '_').lower() in sources]
+        
         raw_events = await loop.run_in_executor(None, parser.get_events)
+        
+        if scan_type == "selective" and sources:
+            parser.sources = original_sources
         
         count_added = 0
         count_it_related = 0
+        count_filtered = 0
         
         if not raw_events:
-             await message.answer("⚠️ Событий не найдено. Возможно, изменилась верстка сайтов.", parse_mode="HTML")
-             return
+            await message.answer("⚠️ Событий не найдено. Возможно, изменилась верстка сайтов.", parse_mode="HTML")
+            return
 
         await message.answer(f"📥 Найдено {len(raw_events)} событий. Начинаю AI анализ...", parse_mode="HTML")
 
         for event in raw_events:
             analysis = await loop.run_in_executor(None, gigachat.analyze_event, event['text'])
+            
+            if scan_type == "advanced" and themes:
+                event_themes = analysis.get('key_themes', [])
+                theme_match = any(
+                    any(theme_keyword in theme.lower() for theme_keyword in get_theme_keywords(t)) 
+                    for t in themes 
+                    for theme in event_themes
+                )
+                if not theme_match:
+                    count_filtered += 1
+                    continue
             
             saved = db.add_event(
                 title=analysis.get('title', 'Без названия'),
@@ -265,6 +421,12 @@ async def start_scan(message: types.Message, db: FDataBase, gigachat, parser):
         text = (
             f"✅ <b>Сканирование завершено!</b>\n\n"
             f"📥 Всего найдено: {len(raw_events)}\n"
+        )
+        
+        if scan_type == "advanced" and themes:
+            text += f"🎯 Отфильтровано по тематикам: {count_filtered}\n"
+        
+        text += (
             f"💾 Добавлено новых: {count_added}\n"
             f"🤖 IT-релевантных: {count_it_related}\n\n"
             f"Для модерации новых событий нажмите <b>⚖️ Модерация</b>"
@@ -275,6 +437,45 @@ async def start_scan(message: types.Message, db: FDataBase, gigachat, parser):
         import traceback
         traceback.print_exc()
         await message.answer(f"❌ <b>Ошибка при сканировании:</b>\n{str(e)}", parse_mode="HTML")
+
+def get_scan_type_display_name(scan_type):
+    names = {
+        'basic': 'Базовое сканирование',
+        'advanced': 'Расширенное сканирование', 
+        'selective': 'Выборочное сканирование'
+    }
+    return names.get(scan_type, scan_type)
+
+def get_theme_display_name(theme):
+    names = {
+        'ai': '🤖 Искусственный интеллект',
+        'data_science': '📊 Data Science',
+        'development': '💻 Разработка',
+        'management': '🎯 IT-менеджмент',
+        'security': '🔐 Кибербезопасность',
+        'cloud': '☁️ Облачные технологии'
+    }
+    return names.get(theme, theme)
+
+def get_theme_keywords(theme):
+    keywords = {
+        'ai': ['ai', 'искусственный интеллект', 'нейросеть', 'машинное обучение', 'ml'],
+        'data_science': ['data science', 'анализ данных', 'машинное обучение', 'ml', 'аналитика'],
+        'development': ['разработка', 'программирование', 'код', 'it', 'технологии', 'dev'],
+        'management': ['менеджмент', 'управление', 'проекты', 'agile', 'scrum', 'руководство'],
+        'security': ['кибербезопасность', 'безопасность', 'security', 'защита'],
+        'cloud': ['облачные технологии', 'cloud', 'облако', 'микросервисы']
+    }
+    return keywords.get(theme, [])
+
+def get_source_display_name(source):
+    names = {
+        'it_event_hub': '🌐 IT Event Hub',
+        'it_hr_hub': '👥 IT HR Hub', 
+        'spb_prompt': '🏛️ SPb Prompt',
+        'all_events': '📅 All Events'
+    }
+    return names.get(source, source)
 
 @router.message(lambda msg: msg.text and msg.text == "📩 Добавить от партнера")
 async def partner_invite_start(message: types.Message, state: FSMContext, db: FDataBase):
