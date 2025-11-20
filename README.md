@@ -40,7 +40,7 @@
 * **Фреймворк:** [aiogram 3](https://docs.aiogram.dev/) (асинхронный)
 * **База данных:** SQLite
 * **AI:** GigaChat API
-* **Парсинг:** BeautifulSoup4 (эвристический анализ)
+* **Парсинг:** BeautifulSoup4
 
 ---
 
