@@ -1,6 +1,6 @@
 import sqlite3
 from typing import List, Dict, Union
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class FDataBase:
     def __init__(self, db: sqlite3.Connection):
@@ -362,6 +362,103 @@ class FDataBase:
             return self._dict_factory(self.__cur.fetchall())
         except sqlite3.Error as e:
             print(f"Search events by keywords error: {e}")
+            return []
+
+    def search_events_by_criteria(self, criteria: dict, limit: int = 20) -> List[Dict]:
+        try:
+            query_parts = []
+            query_params = []
+            
+            theme_mapping = {
+                'ai': ['искусственный интеллект', 'AI', 'нейросеть', 'машинное обучение', 'ML'],
+                'data_science': ['data science', 'анализ данных', 'машинное обучение', 'ML', 'аналитика'],
+                'development': ['разработка', 'программирование', 'код', 'IT', 'технологии', 'dev'],
+                'management': ['менеджмент', 'управление', 'проекты', 'agile', 'scrum', 'руководство'],
+                'security': ['кибербезопасность', 'безопасность', 'security', 'защита'],
+                'cloud': ['облачные технологии', 'cloud', 'облако', 'микросервисы']
+            }
+            
+            location_mapping = {
+                'spb': ['СПб', 'Санкт-Петербург', 'Петербург', 'spb'],
+                'msk': ['Москва', 'МСК', 'msk'],
+                'online': ['онлайн', 'online', 'вебинар', 'zoom', 'teams']
+            }
+            
+            if 'theme' in criteria and criteria['theme']:
+                theme_conditions = []
+                for theme in criteria['theme']:
+                    if theme in theme_mapping:
+                        for keyword in theme_mapping[theme]:
+                            theme_conditions.append("(title LIKE ? OR description LIKE ? OR ai_analysis LIKE ?)")
+                            query_params.extend([f'%{keyword}%', f'%{keyword}%', f'%{keyword}%'])
+                if theme_conditions:
+                    query_parts.append(f"({' OR '.join(theme_conditions)})")
+            
+            if 'location' in criteria and criteria['location']:
+                location_conditions = []
+                for location in criteria['location']:
+                    if location in location_mapping:
+                        for keyword in location_mapping[location]:
+                            location_conditions.append("(location LIKE ? OR description LIKE ? OR ai_analysis LIKE ?)")
+                            query_params.extend([f'%{keyword}%', f'%{keyword}%', f'%{keyword}%'])
+                if location_conditions:
+                    query_parts.append(f"({' OR '.join(location_conditions)})")
+            
+            if 'date' in criteria and criteria['date']:
+                date_conditions = []
+                current_date = datetime.now()
+                
+                for date_period in criteria['date']:
+                    if date_period == 'week':
+                        target_date = current_date + timedelta(days=7)
+                        date_conditions.append("(date_str LIKE ? OR date_str LIKE ?)")
+                        query_params.extend([f'%{current_date.strftime("%d.%m")}%', f'%{target_date.strftime("%d.%m")}%'])
+                    elif date_period == 'month':
+                        date_conditions.append("(date_str LIKE ? OR date_str LIKE ? OR date_str LIKE ?)")
+                        query_params.extend([f'%март%', f'%апрель%', f'%май%'])
+                    elif date_period == 'quarter':
+                        date_conditions.append("(date_str LIKE ? OR date_str LIKE ? OR date_str LIKE ? OR date_str LIKE ?)")
+                        query_params.extend([f'%2025%', f'%июнь%', f'%июль%', f'%август%'])
+                
+                if date_conditions:
+                    query_parts.append(f"({' OR '.join(date_conditions)})")
+            
+            if 'audience' in criteria and criteria['audience']:
+                audience_mapping = {
+                    'developers': ['разработчик', 'программист', 'developer', 'engineer'],
+                    'managers': ['руководитель', 'менеджер', 'manager', 'lead'],
+                    'analysts': ['аналитик', 'analyst', 'data scientist'],
+                    'researchers': ['исследователь', 'research', 'scientist']
+                }
+                
+                audience_conditions = []
+                for audience in criteria['audience']:
+                    if audience in audience_mapping:
+                        for keyword in audience_mapping[audience]:
+                            audience_conditions.append("(description LIKE ? OR ai_analysis LIKE ?)")
+                            query_params.extend([f'%{keyword}%', f'%{keyword}%'])
+                if audience_conditions:
+                    query_parts.append(f"({' OR '.join(audience_conditions)})")
+            
+            if not query_parts:
+                return self.get_approved_events(limit)
+            
+            where_clause = " AND ".join(query_parts)
+            query_params.append(limit)
+            
+            sql = f'''
+                SELECT * FROM events 
+                WHERE {where_clause} 
+                AND status = 'approved' 
+                ORDER BY priority DESC, score DESC 
+                LIMIT ?
+            '''
+            
+            self.__cur.execute(sql, query_params)
+            return self._dict_factory(self.__cur.fetchall())
+            
+        except sqlite3.Error as e:
+            print(f"Search events by criteria error: {e}")
             return []
 
     def get_events_paginated(self, page: int = 0, limit: int = 5) -> List[Dict]:

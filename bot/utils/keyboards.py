@@ -119,6 +119,12 @@ def get_delete_event_keyboard(event_id: int) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="❌ Нет, отменить", callback_data="cancel_delete")]
     ])
 
+def get_search_type_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🔤 Текстовый поиск"), KeyboardButton(text="🎯 Поиск по критериям")],
+        [KeyboardButton(text="⬅️ Главное меню")]
+    ], resize_keyboard=True)
+
 def get_search_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🤖 Искусственный интеллект"), KeyboardButton(text="📊 Data Science")],
@@ -129,3 +135,52 @@ def get_search_keyboard() -> ReplyKeyboardMarkup:
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отменить")]], resize_keyboard=True)
+
+def get_criteria_selection_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎯 Тематика", callback_data="criteria_theme")],
+        [InlineKeyboardButton(text="📍 Местоположение", callback_data="criteria_location")],
+        [InlineKeyboardButton(text="📅 Период", callback_data="criteria_date")],
+        [InlineKeyboardButton(text="👥 Аудитория", callback_data="criteria_audience")],
+        [
+            InlineKeyboardButton(text="🔍 Найти", callback_data="criteria_search"),
+            InlineKeyboardButton(text="🗑 Очистить", callback_data="criteria_clear")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="criteria_back")]
+    ])
+
+def get_themes_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Искусственный интеллект", callback_data="select_theme_ai")],
+        [InlineKeyboardButton(text="📊 Data Science", callback_data="select_theme_data_science")],
+        [InlineKeyboardButton(text="💻 Разработка", callback_data="select_theme_development")],
+        [InlineKeyboardButton(text="🎯 IT-менеджмент", callback_data="select_theme_management")],
+        [InlineKeyboardButton(text="🔐 Кибербезопасность", callback_data="select_theme_security")],
+        [InlineKeyboardButton(text="☁️ Облачные технологии", callback_data="select_theme_cloud")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="criteria_back")]
+    ])
+
+def get_locations_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏛️ Санкт-Петербург", callback_data="select_location_spb")],
+        [InlineKeyboardButton(text="🏢 Москва", callback_data="select_location_msk")],
+        [InlineKeyboardButton(text="🌐 Онлайн", callback_data="select_location_online")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="criteria_back")]
+    ])
+
+def get_dates_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📅 На этой неделе", callback_data="select_date_week")],
+        [InlineKeyboardButton(text="📅 В этом месяце", callback_data="select_date_month")],
+        [InlineKeyboardButton(text="📅 В этом квартале", callback_data="select_date_quarter")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="criteria_back")]
+    ])
+
+def get_audience_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👨‍💻 Разработчики", callback_data="select_audience_developers")],
+        [InlineKeyboardButton(text="👔 Руководители", callback_data="select_audience_managers")],
+        [InlineKeyboardButton(text="📈 Аналитики", callback_data="select_audience_analysts")],
+        [InlineKeyboardButton(text="🔬 Исследователи", callback_data="select_audience_researchers")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="criteria_back")]
+    ])

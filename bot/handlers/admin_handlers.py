@@ -237,7 +237,6 @@ async def start_scan(message: types.Message, db: FDataBase, gigachat, parser):
         await message.answer(f"📥 Найдено {len(raw_events)} событий. Начинаю AI анализ...", parse_mode="HTML")
 
         for event in raw_events:
-            
             analysis = await loop.run_in_executor(None, gigachat.analyze_event, event['text'])
             
             saved = db.add_event(

@@ -560,17 +560,13 @@ async def search_events_start(message: types.Message, state: FSMContext, db: FDa
     await state.set_state(UserStates.waiting_for_search)
     await message.answer(
         "🔍 <b>Поиск мероприятий</b>\n\n"
-        "Введите ключевые слова для поиска:\n"
-        "• Тема (AI, Data Science, разработка)\n"
-        "• Дата (март 2025, апрель)\n"
-        "• Организатор (Сбер, Яндекс, ИТМО)\n\n"
-        "Или выберите быстрый поиск:",
+        "Выберите тип поиска:",
         parse_mode="HTML",
-        reply_markup=get_search_keyboard()
+        reply_markup=get_search_type_keyboard()
     )
 
 @router.message(UserStates.waiting_for_search)
-async def search_events_process(message: types.Message, state: FSMContext, db: FDataBase):
+async def search_type_handler(message: types.Message, state: FSMContext, db: FDataBase):
     if message.text == "⬅️ Главное меню":
         await state.clear()
         admin = db.get_admin(message.from_user.id)
@@ -580,38 +576,160 @@ async def search_events_process(message: types.Message, state: FSMContext, db: F
         )
         return
     
-    query_map = {
-        "🤖 Искусственный интеллект": ["искусственный интеллект", "AI", "нейросеть", "машинное обучение", "ML"],
-        "📊 Data Science": ["data science", "анализ данных", "машинное обучение", "ML", "аналитика"],
-        "💻 Разработка": ["разработка", "программирование", "код", "IT", "технологии", "dev"],
-        "🎯 IT-менеджмент": ["менеджмент", "управление", "проекты", "agile", "scrum", "руководство"],
-        "🏢 Крупные мероприятия": ["500+", "1000+", "конференция", "форум", "международный"],
-        "🤝 Партнерские": ["партнер", "приглаш", "встреча", "сотрудничество"]
-    }
+    if message.text == "🔤 Текстовый поиск":
+        await message.answer(
+            "🔤 <b>Текстовый поиск</b>\n\n"
+            "Введите ключевые слова для поиска:\n"
+            "• Тема (AI, Data Science, разработка)\n"
+            "• Дата (март 2025, апрель)\n"
+            "• Организатор (Сбер, Яндекс, ИТМО)",
+            parse_mode="HTML",
+            reply_markup=get_cancel_keyboard()
+        )
+        await state.set_state(UserStates.waiting_for_search_text)
+        return
+        
+    elif message.text == "🎯 Поиск по критериям":
+        await message.answer(
+            "🎯 <b>Поиск по критериям</b>\n\n"
+            "Выберите критерии для поиска:",
+            parse_mode="HTML",
+            reply_markup=get_criteria_selection_keyboard()
+        )
+        await state.set_state(UserStates.waiting_for_criteria)
+        return
     
-    if message.text in query_map:
-        keywords = query_map[message.text]
-        events = db.search_events_by_keywords(keywords, limit=10)
-        query_name = message.text
-    else:
-        keywords = [message.text.strip()]
-        events = db.search_events_by_keywords(keywords, limit=10)
-        query_name = message.text
+    await message.answer("❌ Выберите тип поиска из меню:")
+
+@router.message(UserStates.waiting_for_search_text)
+async def search_text_handler(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        admin = db.get_admin(message.from_user.id)
+        await message.answer(
+            "🔍 Поиск отменен", 
+            reply_markup=get_main_keyboard(bool(admin))
+        )
+        return
+    
+    keywords = [message.text.strip()]
+    events = db.search_events_by_keywords(keywords, limit=20)
     
     user = db.get_user(message.from_user.id)
     if user:
-        db.log_user_activity(user['id'], "search", f"Query: {query_name}, Results: {len(events)}")
+        db.log_user_activity(user['id'], "search_text", f"Query: {message.text}, Results: {len(events)}")
     
+    await show_search_results(message, events, f"по запросу '{message.text}'")
+    await state.clear()
+
+@router.callback_query(UserStates.waiting_for_criteria, F.data.startswith("criteria_"))
+async def criteria_selection_handler(callback: types.CallbackQuery, state: FSMContext, db: FDataBase):
+    action = callback.data.split("_")[1]
+    
+    if action == "theme":
+        await callback.message.edit_text(
+            "🎯 <b>Выберите тематику мероприятий:</b>",
+            parse_mode="HTML",
+            reply_markup=get_themes_keyboard()
+        )
+        
+    elif action == "location":
+        await callback.message.edit_text(
+            "📍 <b>Выберите местоположение:</b>",
+            parse_mode="HTML",
+            reply_markup=get_locations_keyboard()
+        )
+        
+    elif action == "date":
+        await callback.message.edit_text(
+            "📅 <b>Выберите период:</b>",
+            parse_mode="HTML",
+            reply_markup=get_dates_keyboard()
+        )
+        
+    elif action == "audience":
+        await callback.message.edit_text(
+            "👥 <b>Выберите целевую аудиторию:</b>",
+            parse_mode="HTML",
+            reply_markup=get_audience_keyboard()
+        )
+        
+    elif action == "search":
+        data = await state.get_data()
+        selected_criteria = data.get('criteria', {})
+        
+        if not selected_criteria:
+            await callback.answer("❌ Выберите хотя бы один критерий")
+            return
+            
+        events = db.search_events_by_criteria(selected_criteria, limit=20)
+        
+        user = db.get_user(callback.from_user.id)
+        if user:
+            db.log_user_activity(user['id'], "search_criteria", f"Criteria: {selected_criteria}, Results: {len(events)}")
+        
+        await callback.message.delete()
+        criteria_text = format_criteria_text(selected_criteria)
+        await show_search_results(callback.message, events, f"по критериям:\n{criteria_text}")
+        await state.clear()
+    
+    elif action == "clear":
+        await state.update_data(criteria={})
+        await callback.message.edit_text(
+            "🎯 <b>Критерии очищены</b>\n\n"
+            "Выберите критерии для поиска:",
+            parse_mode="HTML",
+            reply_markup=get_criteria_selection_keyboard()
+        )
+        await callback.answer("✅ Критерии очищены")
+    
+    elif action == "back":
+        await callback.message.edit_text(
+            "🎯 <b>Поиск по критериям</b>\n\n"
+            "Выберите критерии для поиска:",
+            parse_mode="HTML",
+            reply_markup=get_criteria_selection_keyboard()
+        )
+
+@router.callback_query(UserStates.waiting_for_criteria, F.data.startswith("select_"))
+async def criteria_value_handler(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    criteria_type = parts[1]
+    value = "_".join(parts[2:])
+    
+    data = await state.get_data()
+    selected_criteria = data.get('criteria', {})
+    
+    if criteria_type not in selected_criteria:
+        selected_criteria[criteria_type] = []
+    
+    if value in selected_criteria[criteria_type]:
+        selected_criteria[criteria_type].remove(value)
+    else:
+        selected_criteria[criteria_type].append(value)
+    
+    await state.update_data(criteria=selected_criteria)
+    
+    criteria_text = format_criteria_text(selected_criteria)
+    await callback.message.edit_text(
+        f"🎯 <b>Выбранные критерии:</b>\n{criteria_text}\n\n"
+        "Продолжайте выбирать критерии или нажмите '🔍 Найти':",
+        parse_mode="HTML",
+        reply_markup=get_criteria_selection_keyboard()
+    )
+    
+    await callback.answer(f"✅ {get_criteria_display_name(criteria_type, value)}")
+
+async def show_search_results(message: types.Message, events: list, search_description: str):
     if not events:
         await message.answer(
-            f"🔍 <b>По запросу '{query_name}' ничего не найдено</b>\n\n"
-            "Попробуйте другие ключевые слова или измените критерии поиска.",
+            f"🔍 <b>По {search_description} ничего не найдено</b>\n\n"
+            "Попробуйте изменить критерии поиска или использовать другие ключевые слова.",
             parse_mode="HTML"
         )
-        await state.clear()
         return
     
-    text = f"🔍 <b>Результаты поиска: {query_name}</b>\nНайдено мероприятий: {len(events)}\n\n"
+    text = f"🔍 <b>Результаты поиска {search_description}</b>\nНайдено мероприятий: {len(events)}\n\n"
     
     for i, event in enumerate(events[:10], 1):
         analysis = json.loads(event['ai_analysis'])
@@ -622,5 +740,47 @@ async def search_events_process(message: types.Message, state: FSMContext, db: F
     
     text += "👉 <i>Нажмите на номер кнопки ниже для просмотра деталей</i>"
 
-    await message.answer(text, parse_mode="HTML", reply_markup=get_selection_keyboard(events))
-    await state.clear()
+    if len(events) > 10:
+        text += f"\n📎 Показано 10 из {len(events)} мероприятий"
+
+    await message.answer(text, parse_mode="HTML", reply_markup=get_selection_keyboard(events[:10]))
+
+def format_criteria_text(criteria: dict) -> str:
+    if not criteria:
+        return "❌ Критерии не выбраны"
+    
+    text = ""
+    criteria_names = {
+        'theme': '🎯 Темы',
+        'location': '📍 Местоположение', 
+        'date': '📅 Период',
+        'audience': '👥 Аудитория'
+    }
+    
+    for key, values in criteria.items():
+        if values:
+            display_values = [get_criteria_display_name(key, v) for v in values]
+            text += f"{criteria_names.get(key, key)}: {', '.join(display_values)}\n"
+    
+    return text
+
+def get_criteria_display_name(criteria_type: str, value: str) -> str:
+    display_names = {
+        'ai': '🤖 Искусственный интеллект',
+        'data_science': '📊 Data Science',
+        'development': '💻 Разработка',
+        'management': '🎯 IT-менеджмент',
+        'security': '🔐 Кибербезопасность',
+        'cloud': '☁️ Облачные технологии',
+        'spb': '🏛️ Санкт-Петербург',
+        'msk': '🏢 Москва',
+        'online': '🌐 Онлайн',
+        'week': '📅 На этой неделе',
+        'month': '📅 В этом месяце',
+        'quarter': '📅 В этом квартале',
+        'developers': '👨‍💻 Разработчики',
+        'managers': '👔 Руководители',
+        'analysts': '📈 Аналитики',
+        'researchers': '🔬 Исследователи'
+    }
+    return display_names.get(value, value)
