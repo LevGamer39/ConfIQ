@@ -1,20 +1,44 @@
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
-from aiogram.types import FSInputFile, BufferedInputFile
+from aiogram.types import BufferedInputFile
 import json
-import os
-import io
 import asyncio
+from datetime import datetime
 
 from utils.keyboards import *
 from utils.states import AdminStates
+from utils.ics_generator import IcsGenerator
 from database import FDataBase
 
 router = Router()
 
+def _get_user_id(source):
+    try:
+        return source.from_user.id
+    except Exception:
+        try:
+            return source.user.id
+        except Exception:
+            return None
+
+def check_access_by_id(user_id: int, db: FDataBase):
+    if user_id is None:
+        return None
+    admin = db.get_admin(user_id)
+    if not admin:
+        return None
+    role = admin.get('role', '')
+    if role in ('GreatAdmin', 'Owner', 'Admin', 'Moderator'):
+        return admin
+    return None
+
 def check_access(message: types.Message, db: FDataBase):
-    admin = db.get_admin(message.from_user.id)
-    return admin
+    user_id = _get_user_id(message)
+    return check_access_by_id(user_id, db)
+
+def check_callback_access(callback: types.CallbackQuery, db: FDataBase):
+    user_id = _get_user_id(callback)
+    return check_access_by_id(user_id, db)
 
 @router.message(lambda msg: msg.text and msg.text == "⚙️ Админ-панель")
 async def admin_panel(message: types.Message, db: FDataBase):
@@ -22,13 +46,12 @@ async def admin_panel(message: types.Message, db: FDataBase):
     if not admin:
         await message.answer("⛔ У вас нет доступа к системе управления.")
         return
-    
     await message.answer(
         f"🕵️‍♂️ <b>Панель управления Media Agent</b>\n"
-        f"👤 Ваша роль: <b>{admin['role']}</b>\n"
-        f"🆔 Ваш ID: <code>{admin['telegram_id']}</code>\n\n"
+        f"👤 Ваша роль: <b>{admin.get('role')}</b>\n"
+        f"🆔 Ваш ID: <code>{admin.get('telegram_id') or admin.get('id') or message.from_user.id}</code>\n\n"
         "Выберите действие из меню ниже:",
-        reply_markup=get_admin_keyboard(admin['role']),
+        reply_markup=get_admin_keyboard(admin.get('role')),
         parse_mode="HTML"
     )
 
@@ -44,768 +67,1058 @@ async def back_to_main_menu(message: types.Message, db: FDataBase):
 
 @router.message(lambda msg: msg.text and msg.text == "📊 Статистика")
 async def show_stats(message: types.Message, db: FDataBase):
-    if not check_access(message, db): 
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа к системе управления.")
         return
-        
     stats = db.get_stats()
-    
-    departments_text = ""
-    for dept, count in stats.get('departments', {}).items():
-        departments_text += f"• {dept}: {count}\n"
-    
     text = (
         "📊 <b>Статистика системы</b>\n\n"
         f"👥 <b>Пользователи:</b>\n"
-        f"• Всего пользователей: <b>{stats['total_users']}</b>\n"
-        f"• Активных пользователей: <b>{stats['active_users']}</b>\n"
-        f"• Активных за неделю: <b>{stats['weekly_active_users']}</b>\n\n"
-        
-        f"📅 <b>Регистрации:</b>\n"
-        f"• Всего регистраций: <b>{stats['total_registrations']}</b>\n"
-        f"• За неделю: <b>{stats['weekly_registrations']}</b>\n\n"
-        
-        f"🏢 <b>Отделы:</b>\n{departments_text}\n"
-        
-        f"🎯 <b>Мероприятия:</b>\n"
-        f"• Всего событий: <b>{stats['total_events']}</b>\n"
-        f"• Опубликовано: <b>{stats['approved']}</b>\n"
-        f"• На модерации: <b>{stats['pending']}</b>\n"
-        f"• Высокий приоритет: <b>{stats['high_priority']}</b>\n"
-        f"• Партнерских: <b>{stats['partners']}</b>\n"
-        f"• На 2025 год: <b>{stats['upcoming_2025']}</b>\n"
-        f"• Средняя оценка: <b>{stats['avg_score']}/100</b>"
+        f"• Всего: <b>{stats.get('total_users', 0)}</b>\n"
+        f"• Активных: <b>{stats.get('active_users', 0)}</b>\n"
+        f"• Ожидают подтверждения: <b>{stats.get('pending_users', 0)}</b>\n\n"
+        f"📅 <b>Мероприятия:</b>\n"
+        f"• Всего: <b>{stats.get('total_events', 0)}</b>\n"
+        f"• Опубликовано: <b>{stats.get('approved_events', 0)}</b>\n"
+        f"• На модерации: <b>{stats.get('pending_events', 0)}</b>\n"
+        f"• Высокий приоритет: <b>{stats.get('high_priority', 0)}</b>\n\n"
+        f"📋 <b>Регистрации:</b>\n"
+        f"• Всего запросов: <b>{stats.get('total_registrations', 0)}</b>\n"
+        f"• Ожидают подтверждения: <b>{stats.get('pending_registrations', 0)}</b>"
     )
     await message.answer(text, parse_mode="HTML")
 
-@router.message(lambda msg: msg.text and msg.text == "👥 Управление админами")
-async def admin_manage_menu(message: types.Message, db: FDataBase):
+@router.message(lambda msg: msg.text and msg.text == "📋 Модерация регистраций")
+async def show_registration_moderation(message: types.Message, db: FDataBase):
     admin = check_access(message, db)
-    if not admin or admin['role'] != 'GreatAdmin':
-        await message.answer("⛔ Только GreatAdmin имеет доступ к управлению администраторами.")
+    if not admin:
+        await message.answer("⛔ У вас нет доступа к модерации регистраций.")
         return
-    await message.answer("👥 <b>Управление администраторами</b>\nВыберите действие:", 
-                        parse_mode="HTML", 
-                        reply_markup=get_admin_management_keyboard())
+    await message.answer("🔄 Запуск модерации регистраций...")
+    await show_next_reg_moderation(message, db)
+
+async def show_next_reg_moderation(message: types.Message, db: FDataBase):
+    pending_regs = db.get_pending_registrations()
+    if not pending_regs:
+        await message.answer("✅ Новых запросов на регистрацию нет.", reply_markup=get_admin_keyboard('Admin'))
+        return
+    reg = pending_regs[0]
+    text = (
+        f"📝 <b>ЗАПРОС НА РЕГИСТРАЦИЮ</b>\n\n"
+        f"👤 Сотрудник: <b>{reg.get('user_name')}</b>\n"
+        f"💼 Должность: {reg.get('user_position', 'Не указано')}\n"
+        f"🆔 ID пользователя: <code>{reg.get('user_id')}</code>\n\n"
+        f"🔥 <b>Мероприятие: {reg.get('event_title')}</b>\n"
+        f"🆔 ID мероприятия: <code>{reg.get('event_id')}</code>\n"
+        f"📅 Дата: {reg.get('date_str')}\n"
+        f"📍 Место: {reg.get('location', 'Не указано')}\n"
+        f"🔗 <a href='{reg.get('url', '')}'>Ссылка на мероприятие</a>"
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_registration_moderation_keyboard(reg.get('user_id'), reg.get('event_id')),
+        disable_web_page_preview=True
+    )
+
+@router.callback_query(F.data.startswith("reg_approve_"))
+async def reg_approve_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer("❌ Неверные данные.")
+        return
+    user_id = int(parts[2])
+    event_id = int(parts[3])
+    if db.approve_registration(user_id, event_id):
+        user = db.get_user_by_id(user_id)
+        event = db.get_event_by_id(event_id)
+        if user and event:
+            bot = callback.bot
+            ics_content = IcsGenerator.generate_ics(
+                event.get('title', ''), 
+                event.get('description', ''), 
+                event.get('location', ''), 
+                event.get('date_str', '')
+            )
+            ics_file = BufferedInputFile(ics_content.encode('utf-8'), filename=f"{event_id}_event.ics")
+            try:
+                await bot.send_document(
+                    user.get('telegram_id'), 
+                    ics_file,
+                    caption=f"✅ <b>Регистрация на мероприятие подтверждена!</b>\n\n"
+                            f"🎯 <b>{event.get('title')}</b>\n"
+                            f"📅 {event.get('date_str')}\n"
+                            f"📍 {event.get('location')}\n\n"
+                            f"Прикрепите ICS файл к вашему календарю.",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+        await callback.answer("✅ Регистрация подтверждена")
+    else:
+        await callback.answer("❌ Ошибка: Запрос уже обработан")
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_next_reg_moderation(callback.message, db)
+
+@router.callback_query(F.data.startswith("reg_reject_"))
+async def reg_reject_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer("❌ Неверные данные.")
+        return
+    user_id = int(parts[2])
+    event_id = int(parts[3])
+    if db.reject_registration(user_id, event_id):
+        user = db.get_user_by_id(user_id)
+        event = db.get_event_by_id(event_id)
+        if user and event:
+            bot = callback.bot
+            try:
+                await bot.send_message(
+                    user.get('telegram_id'), 
+                    f"❌ <b>Регистрация на мероприятие отклонена</b>\n\n"
+                    f"🎯 <b>{event.get('title')}</b>\n"
+                    f"📅 {event.get('date_str')}\n\n"
+                    f"Пожалуйста, свяжитесь с руководителем для уточнения причин.",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+        await callback.answer("❌ Регистрация отклонена")
+    else:
+        await callback.answer("❌ Ошибка: Запрос уже обработан")
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_next_reg_moderation(callback.message, db)
+
+@router.callback_query(F.data == "skip_reg_mod")
+async def skip_reg_mod_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    await callback.answer("⏭ Запрос пропущен")
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_next_reg_moderation(callback.message, db)
+
+@router.message(lambda msg: msg.text and msg.text == "🔄 Сканировать источники")
+async def scan_sources(message: types.Message, parser, db: FDataBase, gigachat):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ Нет доступа.")
+        return
+    await message.answer("🔄 Запускаю сканирование веб-источников...")
+    try:
+        raw_events = parser.get_events()
+        if not raw_events:
+            await message.answer("❌ Не удалось найти события на источниках.")
+            return
+        await message.answer(f"🔍 Найдено {len(raw_events)} потенциальных событий. Отправляю на AI-анализ...")
+        processed_count = 0
+        for raw_event in raw_events:
+            try:
+                analysis = gigachat.analyze_event(raw_event.get('text', ''))
+                score = analysis.get('score', 0)
+                priority = 'high' if score >= 80 else 'medium'
+                required_rank = 1
+                try:
+                    event_datetime = datetime.strptime(analysis.get('date', ''), '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    event_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                db.add_new_event(
+                    analysis.get('title', 'Неизвестно'),
+                    raw_event.get('text', ''),
+                    analysis.get('location', 'СПб'),
+                    analysis.get('date', 'Не указана'),
+                    raw_event.get('url', ''),
+                    json.dumps(analysis, ensure_ascii=False),
+                    score,
+                    priority,
+                    required_rank,
+                    event_datetime,
+                    'new'
+                )
+                processed_count += 1
+            except Exception:
+                continue
+        await message.answer(f"✅ Обработка завершена. {processed_count} событий отправлено на модерацию.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при сканировании: {str(e)}")
+
+@router.message(lambda msg: msg.text and msg.text == "👥 Подтверждение пользователей")
+async def show_user_approvals(message: types.Message, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа.")
+        return
+    await message.answer("🔄 Загрузка пользователей для подтверждения...")
+    await show_user_approval_page(message, db, 0)
+
+async def show_user_approval_page(message: types.Message, db: FDataBase, page: int):
+    users = db.get_pending_users_paginated(page=page, limit=1)
+    total_users = db.get_total_pending_users_count()
+    total_pages = max(1, total_users)
+    if not users:
+        await message.answer("✅ Нет пользователей для подтверждения.", reply_markup=get_admin_keyboard('Admin'))
+        return
+    user = users[0]
+    text = (
+        f"👤 <b>НОВЫЙ ПОЛЬЗОВАТЕЛЬ</b>\n\n"
+        f"🆔 ID: <code>{user.get('telegram_id')}</code>\n"
+        f"👤 ФИО: <b>{user.get('full_name')}</b>\n"
+        f"📧 Email: {user.get('email') or 'Не указан'}\n"
+        f"📞 Телефон: {user.get('phone') or 'Не указан'}\n"
+        f"💼 Должность: {user.get('position') or 'Не указана'}\n"
+        f"📅 Зарегистрирован: {user.get('registered_at')[:10]}\n\n"
+        f"<i>Статус: Ожидает подтверждения</i>"
+    )
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=get_user_approval_pagination_keyboard(users, page, total_pages)
+    )
+
+@router.callback_query(F.data.startswith("user_approval_prev_"))
+async def user_approval_prev_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    page = int(parts[3])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_user_approval_page(callback.message, db, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("user_approval_next_"))
+async def user_approval_next_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    page = int(parts[3])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_user_approval_page(callback.message, db, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("approve_user_"))
+async def approve_user_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    user_id = int(parts[2])
+    if db.approve_user(user_id):
+        user = db.get_user_by_id(user_id)
+        if user:
+            bot = callback.bot
+            try:
+                await bot.send_message(
+                    user.get('telegram_id'),
+                    "✅ <b>Ваш аккаунт подтвержден!</b>\n\n"
+                    "Теперь вы можете пользоваться всеми функциями бота:\n"
+                    "• 📅 Просмотр мероприятий\n"
+                    "• 🔍 Поиск событий\n"
+                    "• 📝 Регистрация на мероприятия\n"
+                    "• 🗂 Экспорт календаря\n\n"
+                    "Используйте меню для навигации.",
+                    parse_mode="HTML",
+                    reply_markup=get_main_keyboard(False)
+                )
+            except:
+                pass
+        await callback.answer("✅ Пользователь подтвержден")
+    else:
+        await callback.answer("❌ Ошибка подтверждения")
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_user_approval_page(callback.message, db, 0)
+
+@router.callback_query(F.data.startswith("reject_user_"))
+async def reject_user_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    user_id = int(parts[2])
+    if db.reject_user(user_id):
+        user = db.get_user_by_id(user_id)
+        if user:
+            bot = callback.bot
+            try:
+                await bot.send_message(
+                    user.get('telegram_id'),
+                    "❌ <b>Ваш аккаунт не был подтвержден.</b>\n\n"
+                    "Пожалуйста, свяжитесь с администратором для уточнения причин.",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+        await callback.answer("❌ Пользователь отклонен")
+    else:
+        await callback.answer("❌ Ошибка отклонения")
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_user_approval_page(callback.message, db, 0)
+
+@router.callback_query(F.data == "skip_user")
+async def skip_user_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    await callback.answer("⏭ Пользователь пропущен")
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_user_approval_page(callback.message, db, 0)
+
+@router.message(lambda msg: msg.text and msg.text == "👤 Управление админами")
+async def admin_management(message: types.Message, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа.")
+        return
+    if admin.get('role') not in ('GreatAdmin', 'Owner'):
+        await message.answer("⛔ Только GreatAdmin или Owner может управлять администраторами.")
+        return
+    await message.answer(
+        "👤 <b>Управление администраторами</b>\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_admin_management_keyboard()
+    )
 
 @router.message(lambda msg: msg.text and msg.text == "📋 Список админов")
 async def list_admins(message: types.Message, db: FDataBase):
-    if not check_access(message, db): 
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа.")
         return
-        
     admins = db.get_all_admins()
     if not admins:
         await message.answer("📭 Администраторы не найдены.")
         return
-        
     text = "📋 <b>Список администраторов:</b>\n\n"
-    for admin in admins:
-        role_icon = "👑" if admin['role'] == 'GreatAdmin' else "👤"
-        text += f"{role_icon} <code>{admin['telegram_id']}</code> | {admin['role']} | @{admin['username']}\n"
-    
+    for a in admins:
+        role_icon = "👑" if a.get('role') in ('GreatAdmin', 'Owner') else "👤"
+        status = "🟢 Активен" if a.get('is_active', True) else "🔴 Неактивен"
+        text += f"{role_icon} <code>{a.get('telegram_id')}</code> | {a.get('role')} | @{a.get('username')} | {status}\n"
     await message.answer(text, parse_mode="HTML")
 
 @router.message(lambda msg: msg.text and msg.text == "➕ Добавить админа")
 async def add_admin_start(message: types.Message, state: FSMContext, db: FDataBase):
-    if not check_access(message, db): 
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа.")
         return
-        
+    if admin.get('role') not in ('GreatAdmin', 'Owner'):
+        await message.answer("⛔ Только GreatAdmin или Owner может добавлять администраторов.")
+        return
     await state.set_state(AdminStates.waiting_for_new_admin_id)
     await message.answer(
         "👤 <b>Добавление администратора</b>\n\n"
-        "Введите Telegram ID нового администратора:\n"
-        "(Можно узнать через @userinfobot)",
+        "Введите Telegram ID нового администратора:\n(Можно узнать через @userinfobot)",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
 
 @router.message(AdminStates.waiting_for_new_admin_id)
-async def add_admin_role_select(message: types.Message, state: FSMContext):
+async def add_admin_process_id(message: types.Message, state: FSMContext, db: FDataBase):
     if message.text == "❌ Отменить":
         await state.clear()
-        await message.answer("❌ Добавление администратора отменено.", 
-                           reply_markup=get_admin_management_keyboard())
+        await message.answer("❌ Добавление администратора отменено.", reply_markup=get_admin_management_keyboard())
         return
-        
     if not message.text.isdigit():
         await message.answer("❌ ID должен быть числом. Попробуйте еще раз:")
         return
-    
-    await state.update_data(new_id=int(message.text))
+    telegram_id = int(message.text)
+    existing_admin = db.get_admin(telegram_id)
+    if existing_admin:
+        await message.answer("❌ Пользователь уже является администратором.")
+        await state.clear()
+        return
+    await state.update_data(new_admin_id=telegram_id)
     await state.set_state(AdminStates.waiting_for_new_admin_role)
-    await message.answer("Выберите роль для нового администратора:", 
-                        reply_markup=get_role_keyboard())
+    await message.answer(
+        f"🆔 ID получен: <code>{telegram_id}</code>\n\n"
+        "Выберите роль для нового администратора:",
+        parse_mode="HTML",
+        reply_markup=get_admin_role_keyboard()
+    )
 
 @router.message(AdminStates.waiting_for_new_admin_role)
-async def add_admin_finish(message: types.Message, state: FSMContext, db: FDataBase):
-    role_map = {"👑 GreatAdmin": "GreatAdmin", "👤 Admin": "Admin"}
-    
-    if message.text not in role_map:
-        await message.answer("❌ Пожалуйста, выберите роль из предложенных кнопок.")
+async def add_admin_process_role(message: types.Message, state: FSMContext, db: FDataBase):
+    mapping = {"👑 GreatAdmin": "GreatAdmin", "👤 Admin": "Admin", "👥 Moderator": "Moderator"}
+    if message.text not in mapping:
+        await message.answer("❌ Пожалуйста, выберите роль из предложенных кнопок:")
         return
-    
+    role = mapping[message.text]
     data = await state.get_data()
-    new_id = data['new_id']
-    role = role_map[message.text]
-    
-    success = db.add_admin(new_id, "Unknown", role)
-    
+    telegram_id = data.get('new_admin_id')
+    success = db.add_admin(telegram_id, "Неизвестно", role)
     if success:
         await message.answer(
             f"✅ <b>Администратор добавлен!</b>\n\n"
-            f"🆔 ID: <code>{new_id}</code>\n"
-            f"👤 Роль: <b>{role}</b>",
+            f"🆔 ID: <code>{telegram_id}</code>\n"
+            f"👤 Роль: <b>{role}</b>\n\n"
+            f"Пользователь получит права администратора.",
             parse_mode="HTML",
             reply_markup=get_admin_management_keyboard()
         )
+        try:
+            await message.bot.send_message(
+                telegram_id,
+                f"🎉 <b>Вам назначены права администратора!</b>\n\n"
+                f"👤 Роль: <b>{role}</b>\n"
+                f"📋 Доступ: Панель управления ботом\n\n"
+                f"Используйте кнопку '⚙️ Админ-панель' для доступа к функциям.",
+                parse_mode="HTML"
+            )
+        except:
+            pass
     else:
         await message.answer(
-            "❌ <b>Ошибка при добавлении администратора</b>\n"
-            "Возможно, пользователь уже является администратором.",
+            "❌ <b>Ошибка при добавлении администратора</b>\nПопробуйте еще раз.",
             parse_mode="HTML",
             reply_markup=get_admin_management_keyboard()
         )
     await state.clear()
 
 @router.message(lambda msg: msg.text and msg.text == "➖ Удалить админа")
-async def remove_admin_start(message: types.Message, db: FDataBase):
+async def remove_admin_start(message: types.Message, state: FSMContext, db: FDataBase):
     admin = check_access(message, db)
-    if not admin or admin['role'] != 'GreatAdmin':
-        await message.answer("⛔ Только GreatAdmin может удалять администраторов.")
+    if not admin:
+        await message.answer("⛔ У вас нет доступа.")
         return
-        
+    if admin.get('role') not in ('GreatAdmin', 'Owner'):
+        await message.answer("⛔ Только GreatAdmin или Owner может удалять администраторов.")
+        return
+    await state.set_state(AdminStates.waiting_for_remove_admin)
     await message.answer(
-        "🗑 <b>Удаление администратора</b>\n\n"
-        "Для удаления используйте команду:\n"
-        "<code>/deladmin ID_администратора</code>\n\n"
-        "Пример: <code>/deladmin 123456789</code>",
-        parse_mode="HTML"
-    )
-
-@router.message(lambda msg: msg.text and msg.text.startswith("/deladmin"))
-async def remove_admin_exec(message: types.Message, db: FDataBase):
-    admin = check_access(message, db)
-    if not admin or admin['role'] != 'GreatAdmin': 
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 2:
-            await message.answer("❌ Неверный формат команды. Используйте: /deladmin ID")
-            return
-            
-        target_id = int(parts[1])
-        
-        if target_id == message.from_user.id:
-            await message.answer("❌ Нельзя удалить самого себя.")
-            return
-            
-        target_admin = db.get_admin(target_id)
-        if not target_admin:
-            await message.answer("❌ Администратор с таким ID не найден.")
-            return
-            
-        db.remove_admin(target_id)
-        await message.answer(f"✅ Администратор <code>{target_id}</code> удален.", parse_mode="HTML")
-        
-    except ValueError:
-        await message.answer("❌ ID должен быть числом.")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при удалении: {e}")
-
-@router.message(lambda msg: msg.text and msg.text == "⬅️ Назад в админ-панель")
-async def back_to_panel(message: types.Message, db: FDataBase):
-    await admin_panel(message, db)
-
-@router.message(lambda msg: msg.text and msg.text == "🔄 Сканировать источники")
-async def scan_sources_start(message: types.Message, state: FSMContext, db: FDataBase):
-    if not check_access(message, db): 
-        return
-        
-    await state.set_state(AdminStates.waiting_for_scan_criteria)
-    await message.answer(
-        "🔍 <b>Сканирование источников</b>\n\n"
-        "Выберите критерии для сканирования:\n"
-        "• Базовое сканирование - все IT-мероприятия\n"
-        "• Расширенное - с выбором тематик\n"
-        "• Выборочное - конкретные источники",
-        parse_mode="HTML",
-        reply_markup=get_scan_type_keyboard()
-    )
-
-@router.message(AdminStates.waiting_for_scan_criteria)
-async def scan_type_handler(message: types.Message, state: FSMContext, db: FDataBase):
-    if message.text == "❌ Отменить":
-        await state.clear()
-        await message.answer("❌ Сканирование отменено.", reply_markup=get_admin_keyboard())
-        return
-    
-    if message.text == "🔍 Базовое сканирование":
-        await state.update_data(scan_type="basic", themes=[], sources=[])
-        await start_scan_process(message, state, db)
-        return
-        
-    elif message.text == "🎯 Расширенное сканирование":
-        await message.answer(
-            "🎯 <b>Выберите тематики для сканирования:</b>",
-            parse_mode="HTML",
-            reply_markup=get_scan_themes_keyboard()
-        )
-        return
-        
-    elif message.text == "📋 Выборочное сканирование":
-        await message.answer(
-            "📋 <b>Выберите источники для сканирования:</b>",
-            parse_mode="HTML",
-            reply_markup=get_scan_sources_keyboard()
-        )
-        return
-    
-    await message.answer("❌ Выберите тип сканирования из меню:")
-
-@router.callback_query(AdminStates.waiting_for_scan_criteria, F.data.startswith("scan_theme_"))
-async def scan_theme_handler(callback: types.CallbackQuery, state: FSMContext):
-    theme = callback.data.replace("scan_theme_", "")
-    
-    data = await state.get_data()
-    selected_themes = data.get('themes', [])
-    
-    if theme == "confirm":
-        if not selected_themes:
-            await callback.answer("❌ Выберите хотя бы одну тематику")
-            return
-            
-        await state.update_data(scan_type="advanced", sources=[])
-        await callback.message.edit_text(
-            f"🎯 <b>Выбраны тематики:</b>\n{', '.join([get_theme_display_name(t) for t in selected_themes])}\n\n"
-            "Запускаю расширенное сканирование...",
-            parse_mode="HTML"
-        )
-        await start_scan_process(callback.message, state, callback.message.bot.get("db"))
-        return
-        
-    elif theme == "all":
-        selected_themes = ["ai", "data_science", "development", "management", "security", "cloud"]
-    else:
-        if theme in selected_themes:
-            selected_themes.remove(theme)
-        else:
-            selected_themes.append(theme)
-    
-    await state.update_data(themes=selected_themes)
-    
-    themes_text = "\n".join([f"✅ {get_theme_display_name(t)}" for t in selected_themes]) if selected_themes else "❌ Не выбрано"
-    
-    await callback.message.edit_text(
-        f"🎯 <b>Выберите тематики для сканирования:</b>\n\n{themes_text}",
-        parse_mode="HTML",
-        reply_markup=get_scan_themes_keyboard()
-    )
-    await callback.answer()
-
-@router.callback_query(AdminStates.waiting_for_scan_criteria, F.data.startswith("scan_source_"))
-async def scan_source_handler(callback: types.CallbackQuery, state: FSMContext):
-    source = callback.data.replace("scan_source_", "")
-    
-    data = await state.get_data()
-    selected_sources = data.get('sources', [])
-    
-    if source == "confirm":
-        if not selected_sources:
-            await callback.answer("❌ Выберите хотя бы один источник")
-            return
-            
-        await state.update_data(scan_type="selective", themes=[])
-        await callback.message.edit_text(
-            f"📋 <b>Выбраны источники:</b>\n{', '.join([get_source_display_name(s) for s in selected_sources])}\n\n"
-            "Запускаю выборочное сканирование...",
-            parse_mode="HTML"
-        )
-        await start_scan_process(callback.message, state, callback.message.bot.get("db"))
-        return
-        
-    elif source == "all":
-        selected_sources = ["it_event_hub", "it_hr_hub", "spb_prompt", "all_events"]
-    else:
-        if source in selected_sources:
-            selected_sources.remove(source)
-        else:
-            selected_sources.append(source)
-    
-    await state.update_data(sources=selected_sources)
-    
-    sources_text = "\n".join([f"✅ {get_source_display_name(s)}" for s in selected_sources]) if selected_sources else "❌ Не выбрано"
-    
-    await callback.message.edit_text(
-        f"📋 <b>Выберите источники для сканирования:</b>\n\n{sources_text}",
-        parse_mode="HTML",
-        reply_markup=get_scan_sources_keyboard()
-    )
-    await callback.answer()
-
-async def start_scan_process(message: types.Message, state: FSMContext, db: FDataBase):
-    data = await state.get_data()
-    scan_type = data.get('scan_type', 'basic')
-    themes = data.get('themes', [])
-    sources = data.get('sources', [])
-    
-    await state.clear()
-    
-    gigachat = message.bot.get("gigachat")
-    parser = message.bot.get("parser")
-    
-    await message.answer(
-        f"🔍 <b>Запуск {get_scan_type_display_name(scan_type)}...</b>\n"
-        f"<i>Это может занять некоторое время</i>",
-        parse_mode="HTML"
-    )
-    
-    try:
-        loop = asyncio.get_running_loop()
-        
-        if scan_type == "selective" and sources:
-            original_sources = parser.sources.copy()
-            parser.sources = [s for s in parser.sources if s['name'].replace(' ', '_').lower() in sources]
-        
-        raw_events = await loop.run_in_executor(None, parser.get_events)
-        
-        if scan_type == "selective" and sources:
-            parser.sources = original_sources
-        
-        count_added = 0
-        count_it_related = 0
-        count_filtered = 0
-        
-        if not raw_events:
-            await message.answer("⚠️ Событий не найдено. Возможно, изменилась верстка сайтов.", parse_mode="HTML")
-            return
-
-        await message.answer(f"📥 Найдено {len(raw_events)} событий. Начинаю AI анализ...", parse_mode="HTML")
-
-        for event in raw_events:
-            analysis = await loop.run_in_executor(None, gigachat.analyze_event, event['text'])
-            
-            if scan_type == "advanced" and themes:
-                event_themes = analysis.get('key_themes', [])
-                theme_match = any(
-                    any(theme_keyword in theme.lower() for theme_keyword in get_theme_keywords(t)) 
-                    for t in themes 
-                    for theme in event_themes
-                )
-                if not theme_match:
-                    count_filtered += 1
-                    continue
-            
-            saved = db.add_event(
-                title=analysis.get('title', 'Без названия'),
-                description=event['text'],
-                date_str=analysis.get('date', 'Не указана'),
-                location=analysis.get('location', 'СПб'),
-                url=event['url'],
-                ai_analysis=json.dumps(analysis, ensure_ascii=False),
-                score=analysis.get('score', 0),
-                is_it_related=analysis.get('is_it_related', False),
-                source='parser',
-                status='pending',
-                priority=analysis.get('priority', 'medium'),
-                participants=analysis.get('expected_participants', 0),
-                registration_info=analysis.get('registration_format', ''),
-                payment_info=analysis.get('payment_info', ''),
-                conditions=analysis.get('participation_conditions', '')
-            )
-            
-            if saved:
-                count_added += 1
-                if analysis.get('is_it_related'):
-                    count_it_related += 1
-        
-        text = (
-            f"✅ <b>Сканирование завершено!</b>\n\n"
-            f"📥 Всего найдено: {len(raw_events)}\n"
-        )
-        
-        if scan_type == "advanced" and themes:
-            text += f"🎯 Отфильтровано по тематикам: {count_filtered}\n"
-        
-        text += (
-            f"💾 Добавлено новых: {count_added}\n"
-            f"🤖 IT-релевантных: {count_it_related}\n\n"
-            f"Для модерации новых событий нажмите <b>⚖️ Модерация</b>"
-        )
-        await message.answer(text, parse_mode="HTML")
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        await message.answer(f"❌ <b>Ошибка при сканировании:</b>\n{str(e)}", parse_mode="HTML")
-
-def get_scan_type_display_name(scan_type):
-    names = {
-        'basic': 'Базовое сканирование',
-        'advanced': 'Расширенное сканирование', 
-        'selective': 'Выборочное сканирование'
-    }
-    return names.get(scan_type, scan_type)
-
-def get_theme_display_name(theme):
-    names = {
-        'ai': '🤖 Искусственный интеллект',
-        'data_science': '📊 Data Science',
-        'development': '💻 Разработка',
-        'management': '🎯 IT-менеджмент',
-        'security': '🔐 Кибербезопасность',
-        'cloud': '☁️ Облачные технологии'
-    }
-    return names.get(theme, theme)
-
-def get_theme_keywords(theme):
-    keywords = {
-        'ai': ['ai', 'искусственный интеллект', 'нейросеть', 'машинное обучение', 'ml'],
-        'data_science': ['data science', 'анализ данных', 'машинное обучение', 'ml', 'аналитика'],
-        'development': ['разработка', 'программирование', 'код', 'it', 'технологии', 'dev'],
-        'management': ['менеджмент', 'управление', 'проекты', 'agile', 'scrum', 'руководство'],
-        'security': ['кибербезопасность', 'безопасность', 'security', 'защита'],
-        'cloud': ['облачные технологии', 'cloud', 'облако', 'микросервисы']
-    }
-    return keywords.get(theme, [])
-
-def get_source_display_name(source):
-    names = {
-        'it_event_hub': '🌐 IT Event Hub',
-        'it_hr_hub': '👥 IT HR Hub', 
-        'spb_prompt': '🏛️ SPb Prompt',
-        'all_events': '📅 All Events'
-    }
-    return names.get(source, source)
-
-@router.message(lambda msg: msg.text and msg.text == "📩 Добавить от партнера")
-async def partner_invite_start(message: types.Message, state: FSMContext, db: FDataBase):
-    if not check_access(message, db): 
-        return
-        
-    await state.set_state(AdminStates.waiting_for_partner_invite)
-    await message.answer(
-        "🤝 <b>Добавление партнерского приглашения</b>\n\n"
-        "Перешлите текст приглашения или введите описание мероприятия:",
+        "🗑 <b>Удаление администратора</b>\n\nВведите Telegram ID администратора для удаления:",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
 
-@router.message(AdminStates.waiting_for_partner_invite)
-async def partner_invite_process(message: types.Message, state: FSMContext, db: FDataBase, gigachat):
+@router.message(AdminStates.waiting_for_remove_admin)
+async def remove_admin_process(message: types.Message, state: FSMContext, db: FDataBase):
     if message.text == "❌ Отменить":
         await state.clear()
-        await message.answer("❌ Добавление приглашения отменено.", 
-                           reply_markup=get_admin_keyboard())
+        await message.answer("❌ Удаление администратора отменено.", reply_markup=get_admin_management_keyboard())
         return
-
-    await message.answer("🤖 <b>AI анализирует приглашение...</b>", parse_mode="HTML")
-    
-    try:
-        analysis = gigachat.analyze_event(message.text)
-        
-        partner_score = min(analysis.get('score', 0) + 20, 100)
-        
-        db.add_event(
-            title=f"🤝 {analysis.get('title', 'Партнерское событие')}",
-            description=message.text,
-            date_str=analysis.get('date', 'Уточнить у партнера'),
-            location=analysis.get('location', 'СПб'),
-            url="invite",
-            ai_analysis=json.dumps(analysis, ensure_ascii=False),
-            score=partner_score,
-            is_it_related=True,
-            source='partner',
-            status='pending',
-            priority='high',
-            participants=analysis.get('expected_participants', 0),
-            registration_info=analysis.get('registration_format', ''),
-            payment_info=analysis.get('payment_info', ''),
-            conditions=analysis.get('participation_conditions', '')
-        )
-        
-        await state.clear()
-        await message.answer(
-            "✅ <b>Партнерское приглашение добавлено!</b>\n\n"
-            f"📌 Название: {analysis.get('title', 'Партнерское событие')}\n"
-            f"📊 Оценка AI: {partner_score}/100\n\n"
-            "Событие добавлено в очередь модерации.",
-            parse_mode="HTML",
-            reply_markup=get_admin_keyboard()
-        )
-        
-    except Exception as e:
-        await message.answer(f"❌ <b>Ошибка при обработке:</b>\n{str(e)}", parse_mode="HTML")
-        await state.clear()
-
-@router.message(lambda msg: msg.text and msg.text == "📁 Загрузить файл")
-async def file_upload_start(message: types.Message, state: FSMContext, db: FDataBase):
-    if not check_access(message, db): 
-        return
-        
-    await state.set_state(AdminStates.waiting_for_file)
-    await message.answer(
-        "📁 <b>Загрузка файла с мероприятиями</b>\n\n"
-        "Отправьте текстовый файл (.txt) с описанием мероприятий.\n"
-        "Бот извлечет все мероприятия из текста автоматически.",
-        parse_mode="HTML",
-        reply_markup=get_cancel_keyboard()
-    )
-
-@router.message(AdminStates.waiting_for_file, F.document)
-async def file_upload_process(message: types.Message, state: FSMContext, db: FDataBase, gigachat):
-    if not message.document:
-        await message.answer("❌ Пожалуйста, отправьте файл.")
-        return
-
-    file_name = message.document.file_name
-    if not file_name.endswith('.txt'):
-        await message.answer("❌ Поддерживаются только текстовые файлы .txt")
-        return
-
-    await message.answer("📥 <b>Загружаю файл...</b>", parse_mode="HTML")
-    
-    try:
-        file = await message.bot.get_file(message.document.file_id)
-        file_path = file.file_path
-        
-        downloaded_file = await message.bot.download_file(file_path)
-        file_content = downloaded_file.read()
-        
-        text_content = file_content.decode('utf-8')
-        
-        await message.answer("🤖 <b>AI анализирует содержимое файла...</b>", parse_mode="HTML")
-        
-        events_from_file = gigachat.analyze_file_content(text_content)
-        
-        count_added = 0
-        for event_data in events_from_file:
-            analysis = gigachat.analyze_event(str(event_data))
-            
-            saved = db.add_event(
-                title=analysis.get('title', event_data.get('title', 'Событие из файла')),
-                description=event_data.get('description', str(event_data)),
-                date_str=analysis.get('date', event_data.get('date', 'Не указана')),
-                location=analysis.get('location', event_data.get('location', 'СПб')),
-                url="file_upload",
-                ai_analysis=json.dumps(analysis, ensure_ascii=False),
-                score=analysis.get('score', 0),
-                is_it_related=analysis.get('is_it_related', False),
-                source='file',
-                status='pending',
-                priority=analysis.get('priority', 'medium'),
-                participants=analysis.get('expected_participants', 0),
-                registration_info=analysis.get('registration_format', ''),
-                payment_info=analysis.get('payment_info', ''),
-                conditions=analysis.get('participation_conditions', '')
-            )
-            
-            if saved:
-                count_added += 1
-        
-        await state.clear()
-        await message.answer(
-            f"✅ <b>Файл обработан!</b>\n\n"
-            f"📁 Файл: {file_name}\n"
-            f"📝 Найдено мероприятий: {len(events_from_file)}\n"
-            f"💾 Добавлено в систему: {count_added}\n\n"
-            "События добавлены в очередь модерации.",
-            parse_mode="HTML",
-            reply_markup=get_admin_keyboard()
-        )
-        
-    except Exception as e:
-        await message.answer(f"❌ <b>Ошибка при обработке файла:</b>\n{str(e)}", parse_mode="HTML")
-        await state.clear()
-
-@router.message(AdminStates.waiting_for_file, F.text)
-async def file_upload_text_fallback(message: types.Message, state: FSMContext, db: FDataBase, gigachat):
-    if message.text == "❌ Отменить":
-        await state.clear()
-        await message.answer("❌ Загрузка файла отменена.", reply_markup=get_admin_keyboard())
-        return
-    
-    await message.answer("❌ Пожалуйста, отправьте текстовый файл (.txt)")
-
-@router.message(lambda msg: msg.text and msg.text == "🗑 Управление мероприятиями")
-async def events_management(message: types.Message, db: FDataBase):
-    if not check_access(message, db): 
-        return
-        
-    await message.answer(
-        "🗑 <b>Управление мероприятиями</b>\n\n"
-        "Выберите действие:",
-        parse_mode="HTML",
-        reply_markup=get_events_management_keyboard()
-    )
-
-@router.message(lambda msg: msg.text and msg.text == "🗑 Удалить мероприятие")
-async def delete_event_start(message: types.Message, state: FSMContext, db: FDataBase):
-    if not check_access(message, db): 
-        return
-        
-    await state.set_state(AdminStates.waiting_for_delete_event)
-    await message.answer(
-        "🗑 <b>Удаление мероприятия</b>\n\n"
-        "Введите ID мероприятия для удаления:\n"
-        "(ID можно узнать из списка мероприятий)",
-        parse_mode="HTML",
-        reply_markup=get_cancel_keyboard()
-    )
-
-@router.message(AdminStates.waiting_for_delete_event)
-async def delete_event_process(message: types.Message, state: FSMContext, db: FDataBase):
-    if message.text == "❌ Отменить":
-        await state.clear()
-        await message.answer("❌ Удаление отменено.", reply_markup=get_events_management_keyboard())
-        return
-
     if not message.text.isdigit():
         await message.answer("❌ ID должен быть числом. Попробуйте еще раз:")
         return
-
-    event_id = int(message.text)
-    event = db.get_event_by_id(event_id)
-    
-    if not event:
-        await message.answer("❌ Мероприятие с таким ID не найдено.")
+    telegram_id = int(message.text)
+    if telegram_id == message.from_user.id:
+        await message.answer("❌ Нельзя удалить самого себя.")
+        await state.clear()
         return
-
-    await state.clear()
-    
-    text = (
-        f"🗑 <b>Подтверждение удаления</b>\n\n"
-        f"📌 <b>Название:</b> {event['title']}\n"
-        f"📅 <b>Дата:</b> {event['date_str']}\n"
-        f"📍 <b>Место:</b> {event['location']}\n"
-        f"📊 <b>Оценка:</b> {event['score']}/100\n\n"
-        f"Вы уверены, что хотите удалить это мероприятие?"
-    )
-    
-    await message.answer(text, parse_mode="HTML", reply_markup=get_delete_event_keyboard(event_id))
-
-@router.callback_query(F.data.startswith("confirm_delete_"))
-async def confirm_delete_handler(callback: types.CallbackQuery, db: FDataBase):
-    event_id = int(callback.data.split("_")[2])
-    
-    event = db.get_event_by_id(event_id)
-    if event:
-        db.delete_event(event_id)
-        await callback.answer("✅ Мероприятие удалено")
-        await callback.message.edit_text(
-            f"✅ <b>Мероприятие удалено</b>\n\n"
-            f"📌 {event['title']}\n"
-            f"🗑 ID: {event_id}",
-            parse_mode="HTML"
-        )
-    else:
-        await callback.answer("❌ Мероприятие не найдено")
-
-@router.callback_query(F.data == "cancel_delete")
-async def cancel_delete_handler(callback: types.CallbackQuery):
-    await callback.answer("❌ Удаление отменено")
-    await callback.message.delete()
-
-@router.message(lambda msg: msg.text and msg.text == "📋 Список мероприятий")
-async def list_events_admin(message: types.Message, db: FDataBase):
-    if not check_access(message, db): 
+    target_admin = db.get_admin(telegram_id)
+    if not target_admin:
+        await message.answer("❌ Администратор с таким ID не найден.")
+        await state.clear()
         return
-        
-    events = db.get_approved_events(limit=50)
-    
-    if not events:
-        await message.answer("📭 Нет мероприятий для отображения.")
-        return
-
-    text = "📋 <b>Все мероприятия в системе:</b>\n\n"
-    for event in events[:10]:
-        text += f"🆔 <code>{event['id']}</code> | {event['title']}\n"
-        text += f"📅 {event['date_str']} | 📍 {event['location']}\n"
-        text += f"📊 {event['score']}/100 | 🔧 {event['source']}\n\n"
-
-    if len(events) > 10:
-        text += f"📎 ... и еще {len(events) - 10} мероприятий"
-
-    await message.answer(text, parse_mode="HTML")
-
-@router.message(lambda msg: msg.text and msg.text == "⚖️ Модерация")
-async def start_moderation(message: types.Message, db: FDataBase):
-    if not check_access(message, db): 
-        return
-        
-    await show_next_moderation(message, db)
-
-async def show_next_moderation(message: types.Message, db: FDataBase):
-    events = db.get_pending_events()
-    
-    if not events:
+    success = db.remove_admin(telegram_id)
+    if success:
         await message.answer(
-            "🎉 <b>Все события проверены!</b>\n\n"
-            "Нет событий, ожидающих модерации.",
+            f"✅ <b>Администратор удален!</b>\n\n"
+            f"🆔 ID: <code>{telegram_id}</code>\n"
+            f"👤 Роль: <b>{target_admin.get('role')}</b>",
             parse_mode="HTML",
-            reply_markup=get_admin_keyboard()
+            reply_markup=get_admin_management_keyboard()
         )
-        return
+        try:
+            await message.bot.send_message(
+                telegram_id,
+                "❌ <b>Ваши права администратора были отозваны.</b>\n\nВы больше не имеете доступа к панели управления.",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+    else:
+        await message.answer("❌ <b>Ошибка при удалении администратора</b>", parse_mode="HTML", reply_markup=get_admin_management_keyboard())
+    await state.clear()
 
+@router.message(lambda msg: msg.text and msg.text == "📝 Изменить роль админа")
+async def change_role_start(message: types.Message, state: FSMContext, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа.")
+        return
+    if admin.get('role') not in ('GreatAdmin', 'Owner'):
+        await message.answer("⛔ Только GreatAdmin или Owner может изменять роли.")
+        return
+    await state.set_state(AdminStates.waiting_for_change_role_id)
+    await message.answer("📝 <b>Изменение роли администратора</b>\n\nВведите Telegram ID администратора:", parse_mode="HTML", reply_markup=get_cancel_keyboard())
+
+@router.message(AdminStates.waiting_for_change_role_id)
+async def change_role_process_id(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("❌ Изменение роли отменено.", reply_markup=get_admin_management_keyboard())
+        return
+    if not message.text.isdigit():
+        await message.answer("❌ ID должен быть числом. Попробуйте еще раз:")
+        return
+    telegram_id = int(message.text)
+    target_admin = db.get_admin(telegram_id)
+    if not target_admin:
+        await message.answer("❌ Администратор с таким ID не найден.")
+        await state.clear()
+        return
+    if telegram_id == message.from_user.id:
+        await message.answer("❌ Нельзя изменить свою собственную роль.")
+        await state.clear()
+        return
+    await state.update_data(change_role_id=telegram_id, current_role=target_admin.get('role'))
+    await state.set_state(AdminStates.waiting_for_change_role_new)
+    await message.answer(f"👤 Текущая роль: <b>{target_admin.get('role')}</b>\n🆔 Администратор: <code>{telegram_id}</code>\n\nВыберите новую роль:", parse_mode="HTML", reply_markup=get_admin_role_keyboard())
+
+@router.message(AdminStates.waiting_for_change_role_new)
+async def change_role_process_new(message: types.Message, state: FSMContext, db: FDataBase):
+    mapping = {"👑 GreatAdmin": "GreatAdmin", "👤 Admin": "Admin", "👥 Moderator": "Moderator"}
+    if message.text not in mapping:
+        await message.answer("❌ Пожалуйста, выберите роль из предложенных кнопок:")
+        return
+    new_role = mapping[message.text]
+    data = await state.get_data()
+    telegram_id = data.get('change_role_id')
+    current_role = data.get('current_role')
+    success = db.update_admin_role(telegram_id, new_role)
+    if success:
+        await message.answer(
+            f"✅ <b>Роль изменена!</b>\n\n"
+            f"🆔 ID: <code>{telegram_id}</code>\n"
+            f"👤 Было: <b>{current_role}</b>\n"
+            f"👤 Стало: <b>{new_role}</b>",
+            parse_mode="HTML",
+            reply_markup=get_admin_management_keyboard()
+        )
+        try:
+            await message.bot.send_message(
+                telegram_id,
+                f"🔄 <b>Ваша роль администратора изменена</b>\n\n👤 Новая роль: <b>{new_role}</b>",
+                parse_mode="HTML"
+            )
+        except:
+            pass
+    else:
+        await message.answer("❌ <b>Ошибка при изменении роли</b>", parse_mode="HTML", reply_markup=get_admin_management_keyboard())
+    await state.clear()
+
+@router.message(lambda msg: msg.text and msg.text == "⬅️ Назад в админку")
+async def back_to_admin_panel(message: types.Message, db: FDataBase):
+    await admin_panel(message, db)
+
+@router.message(lambda msg: msg.text and msg.text == "📜 Модерация событий")
+async def start_moderation(message: types.Message, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа.")
+        return
+    await show_moderation_page(message, db, 0)
+
+async def show_moderation_page(message: types.Message, db: FDataBase, page: int):
+    events = db.get_pending_events_paginated(page=page, limit=1)
+    total_events = db.get_total_pending_events_count()
+    total_pages = max(1, total_events)
+    if not events:
+        await message.answer("🎉 <b>Все события проверены!</b>\n\nНет событий, ожидающих модерации.", parse_mode="HTML", reply_markup=get_admin_keyboard('Admin'))
+        return
     event = events[0]
-    analysis = json.loads(event['ai_analysis'])
-    
-    source_icon = "🤝" if event['source'] == 'partner' else "🔍" if event['source'] == 'parser' else "📁"
-    
+    analysis = json.loads(event.get('analysis') or '{}')
+    source_icon = "🤝" if event.get('source') == 'partner' else "🔍" if event.get('source') == 'parser' else "📁"
     text = (
         f"🛡 <b>МОДЕРАЦИЯ СОБЫТИЯ</b>\n\n"
-        f"{source_icon} <b>Источник:</b> {event['source']}\n"
-        f"📌 <b>Название:</b> {event['title']}\n"
-        f"📅 <b>Дата:</b> {event['date_str']}\n"
-        f"📍 <b>Место:</b> {event['location']}\n"
-        f"📊 <b>Оценка AI:</b> {event['score']}/100\n"
+        f"{source_icon} <b>Источник:</b> {event.get('source', 'unknown')}\n"
+        f"📌 <b>Название:</b> {event.get('title')}\n"
+        f"📅 <b>Дата:</b> {event.get('date_str')}\n"
+        f"📍 <b>Место:</b> {event.get('location')}\n"
+        f"📊 <b>Оценка AI:</b> {event.get('score')}/100\n"
         f"🎯 <b>Уровень:</b> {analysis.get('level', 'не указан')}\n"
         f"👥 <b>Аудитория:</b> {analysis.get('target_audience', 'не указана')}\n"
         f"📝 <b>Регистрация:</b> {analysis.get('registration_format', 'не указан')}\n"
         f"💰 <b>Оплата:</b> {analysis.get('payment_info', 'не указано')}\n\n"
         f"💡 <b>Анализ AI:</b>\n{analysis.get('summary', 'Нет анализа')}\n\n"
-        f"🏷 <b>Темы:</b> {', '.join(analysis.get('key_themes', []))}\n"
+        f"🏷 <b>Темы:</b> {', '.join(analysis.get('key_themes', []) if isinstance(analysis.get('key_themes', []), list) else [])}\n"
         f"💭 <b>Рекомендация:</b> {analysis.get('recommendation', 'рассмотреть')}"
     )
-    
-    await message.answer(text, parse_mode="HTML", reply_markup=get_moderation_keyboard(event['id']))
+    await message.answer(text, parse_mode="HTML", reply_markup=get_moderation_keyboard(event.get('id'), page, total_pages))
 
-@router.callback_query(F.data.startswith("approve_"))
-async def approve_handler(callback: types.CallbackQuery, db: FDataBase):
-    eid = int(callback.data.split("_")[1])
+@router.callback_query(F.data.startswith("mod_prev_"))
+async def mod_prev_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    page = int(parts[2])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_moderation_page(callback.message, db, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("mod_next_"))
+async def mod_next_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    page = int(parts[2])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_moderation_page(callback.message, db, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("approve_event_"))
+async def approve_event_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    eid = int(parts[2])
     db.update_status(eid, 'approved')
     await callback.answer("✅ Событие утверждено")
-    await callback.message.delete()
-    await show_next_moderation(callback.message, db)
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_moderation_page(callback.message, db, 0)
 
-@router.callback_query(F.data.startswith("reject_"))
-async def reject_handler(callback: types.CallbackQuery, db: FDataBase):
-    eid = int(callback.data.split("_")[1])
+@router.callback_query(F.data.startswith("reject_event_"))
+async def reject_event_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    eid = int(parts[2])
     db.update_status(eid, 'rejected')
     await callback.answer("❌ Событие отклонено")
-    await callback.message.delete()
-    await show_next_moderation(callback.message, db)
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_moderation_page(callback.message, db, 0)
 
-@router.callback_query(F.data.startswith("delete_"))
-async def delete_mod_handler(callback: types.CallbackQuery, db: FDataBase):
-    eid = int(callback.data.split("_")[1])
+@router.callback_query(F.data.startswith("delete_event_"))
+async def delete_event_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    eid = int(parts[2])
     event = db.get_event_by_id(eid)
-    
     if event:
         db.delete_event(eid)
         await callback.answer("🗑 Событие удалено")
-        await callback.message.delete()
-        await show_next_moderation(callback.message, db)
+        try:
+            await callback.message.delete()
+        except:
+            pass
+        await show_moderation_page(callback.message, db, 0)
     else:
         await callback.answer("❌ Событие не найдено")
 
-@router.callback_query(F.data == "skip_mod")
-async def skip_handler(callback: types.CallbackQuery, db: FDataBase):
+@router.callback_query(F.data == "skip_event_mod")
+async def skip_event_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
     await callback.answer("⏭ Событие пропущено")
-    await callback.message.delete()
-    await show_next_moderation(callback.message, db)
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_moderation_page(callback.message, db, 0)
 
-@router.callback_query(F.data == "stop_moderation")
-async def stop_moderation_handler(callback: types.CallbackQuery, db: FDataBase):
-    await callback.answer("🚪 Модерация завершена")
-    await callback.message.delete()
+@router.message(lambda msg: msg.text and msg.text == "📝 Управление мероприятиями")
+async def manage_events(message: types.Message, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа к системе управления.")
+        return
+    await message.answer(
+        "📝 <b>Управление мероприятиями</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_events_management_keyboard()
+    )
+
+@router.message(lambda msg: msg.text and msg.text == "👥 Регистрации на события")
+async def show_event_registrations(message: types.Message, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа к системе управления.")
+        return
+    await message.answer("🔄 Загрузка списка мероприятий...")
+    await show_events_list_page(message, db, 0)
+
+async def show_events_list_page(message: types.Message, db: FDataBase, page: int):
+    events = db.get_all_events_paginated(page=page, limit=10)
+    total_events = db.get_total_events_count()
+    total_pages = max(1, (total_events + 10 - 1) // 10)
+    if not events:
+        await message.answer("📭 Мероприятия не найдены.")
+        return
+    text = "📋 <b>Все мероприятия</b>\n\n"
+    for event in events:
+        status_icon = "✅" if event.get('status') == 'approved' else "⏳" if event.get('status') == 'pending' else "❌"
+        text += f"{status_icon} <b>{event.get('title')}</b>\n"
+        text += f"   📅 {event.get('date_str')} | 📍 {event.get('location')}\n"
+        text += f"   📊 Оценка: {event.get('score')}/100 | 👥 ID: {event.get('id')}\n\n"
+    text += f"📄 Страница {page + 1}/{total_pages}"
+    await message.answer(text, parse_mode="HTML", reply_markup=get_events_list_keyboard(events, page, total_pages))
+
+@router.callback_query(F.data == "manage_all_events")
+async def manage_all_events_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_events_list_page(callback.message, db, 0)
+    await callback.answer()
+
+@router.callback_query(F.data == "create_event")
+async def create_event_handler(callback: types.CallbackQuery, state: FSMContext, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    await state.set_state(AdminStates.waiting_for_event_title)
+    await callback.message.answer(
+        "📝 <b>Создание нового мероприятия</b>\n\nВведите название мероприятия:",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "search_events_admin")
+async def search_events_admin_handler(callback: types.CallbackQuery, state: FSMContext, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    await state.set_state(AdminStates.waiting_for_search_text)
+    await callback.message.answer(
+        "🔍 <b>Поиск мероприятий (админ)</b>\n\nВведите ключевые слова для поиска:",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "registration_stats")
+async def registration_stats_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    stats = db.get_stats()
+    text = (
+        "📊 <b>Статистика регистраций</b>\n\n"
+        f"📋 Всего запросов: <b>{stats.get('total_registrations', 0)}</b>\n"
+        f"⏳ Ожидают подтверждения: <b>{stats.get('pending_registrations', 0)}</b>\n"
+        f"✅ Подтверждено: <b>{stats.get('total_registrations', 0) - stats.get('pending_registrations', 0)}</b>"
+    )
+    await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_admin")
+async def back_to_admin_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    try:
+        await callback.message.delete()
+    except:
+        pass
     await admin_panel(callback.message, db)
+    await callback.answer()
+
+@router.message(AdminStates.waiting_for_event_title)
+async def process_event_title(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("❌ Создание мероприятия отменено.", reply_markup=get_events_management_keyboard())
+        return
+    await state.update_data(event_title=message.text)
+    await state.set_state(AdminStates.waiting_for_event_description)
+    await message.answer("📝 <b>Введите описание мероприятия:</b>", parse_mode="HTML", reply_markup=get_cancel_keyboard())
+
+@router.message(AdminStates.waiting_for_event_description)
+async def process_event_description(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("❌ Создание мероприятия отменено.", reply_markup=get_events_management_keyboard())
+        return
+    await state.update_data(event_description=message.text)
+    await state.set_state(AdminStates.waiting_for_event_location)
+    await message.answer("📍 <b>Введите место проведения:</b>", parse_mode="HTML", reply_markup=get_cancel_keyboard())
+
+@router.message(AdminStates.waiting_for_event_location)
+async def process_event_location(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("❌ Создание мероприятия отменено.", reply_markup=get_events_management_keyboard())
+        return
+    await state.update_data(event_location=message.text)
+    await state.set_state(AdminStates.waiting_for_event_date)
+    await message.answer("📅 <b>Введите дату мероприятия:</b>\n\nПример: 25.12.2024 или 25 декабря 2024", parse_mode="HTML", reply_markup=get_cancel_keyboard())
+
+@router.message(AdminStates.waiting_for_event_date)
+async def process_event_date(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("❌ Создание мероприятия отменено.", reply_markup=get_events_management_keyboard())
+        return
+    await state.update_data(event_date=message.text)
+    await state.set_state(AdminStates.waiting_for_event_url)
+    await message.answer("🔗 <b>Введите ссылку на мероприятие (если есть):</b>", parse_mode="HTML", reply_markup=get_cancel_keyboard())
+
+@router.message(AdminStates.waiting_for_event_url)
+async def process_event_url(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("❌ Создание мероприятия отменено.", reply_markup=get_events_management_keyboard())
+        return
+    data = await state.get_data()
+    title = data.get('event_title') or 'Без названия'
+    description = data.get('event_description') or ''
+    location = data.get('event_location') or ''
+    date_str = data.get('event_date') or ''
+    url = message.text if message.text and message.text != "❌ Отменить" else ''
+    db.add_new_event(title, description, location, date_str, url, json.dumps({}, ensure_ascii=False), 0, 'medium', 1, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'pending')
+    await state.clear()
+    await message.answer("✅ Мероприятие создано и отправлено на модерацию.", reply_markup=get_events_management_keyboard())
+
+@router.callback_query(F.data.startswith("admin_events_prev_"))
+async def admin_events_prev_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    page = int(parts[3])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_events_list_page(callback.message, db, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("admin_events_next_"))
+async def admin_events_next_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    page = int(parts[3])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_events_list_page(callback.message, db, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("admin_event_details_"))
+async def admin_event_details_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer("❌ Неверные данные.")
+        return
+    event_id = int(parts[-1])
+    event = db.get_event_by_id(event_id)
+    if not event:
+        await callback.answer("❌ Событие не найдено")
+        return
+    registrations = db.get_event_registrations(event_id)
+    analysis = json.loads(event.get('analysis') or '{}')
+    text = (
+        f"🎯 <b>{event.get('title')}</b>\n\n"
+        f"📅 <b>Дата:</b> {event.get('date_str')}\n"
+        f"📍 <b>Место:</b> {event.get('location')}\n"
+        f"🔗 <b>Ссылка:</b> {event.get('url')}\n"
+        f"📊 <b>Оценка AI:</b> {event.get('score')}/100\n"
+        f"🎯 <b>Приоритет:</b> {event.get('priority')}\n"
+        f"👥 <b>Аудитория:</b> {analysis.get('target_audience', 'не указана')}\n\n"
+        f"📝 <b>Описание:</b>\n{event.get('description')[:500] if event.get('description') else 'Нет описания'}.\n\n"
+        f"👥 <b>Зарегистрированные пользователи ({len(registrations)}):</b>\n"
+    )
+    for i, reg in enumerate(registrations[:10], 1):
+        status_icon = "✅" if reg.get('status') == 'approved' else "⏳"
+        text += f"{i}. {status_icon} {reg.get('full_name')} - {reg.get('position')}\n"
+    if len(registrations) > 10:
+        text += f"\n📎 ... и еще {len(registrations) - 10} пользователей"
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=get_event_edit_keyboard(event_id))
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("event_participants_"))
+async def event_participants_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    event_id = int(parts[-1])
+    await show_participants_page(callback.message, db, event_id, 0)
+    await callback.answer()
+
+async def show_participants_page(message: types.Message, db: FDataBase, event_id: int, page: int):
+    registrations = db.get_event_registrations(event_id)
+    event = db.get_event_by_id(event_id)
+    if not event:
+        await message.answer("❌ Событие не найдено")
+        return
+    total_pages = max(1, (len(registrations) + 5 - 1) // 5)
+    start_idx = page * 5
+    end_idx = start_idx + 5
+    page_registrations = registrations[start_idx:end_idx]
+    text = (
+        f"👥 <b>Участники мероприятия</b>\n\n"
+        f"🎯 <b>{event.get('title')}</b>\n"
+        f"📅 {event.get('date_str')}\n\n"
+        f"<b>Список участников:</b>\n"
+    )
+    for i, reg in enumerate(page_registrations, start_idx + 1):
+        status_icon = "✅" if reg.get('status') == 'approved' else "⏳"
+        text += f"{i}. {status_icon} <b>{reg.get('full_name')}</b>\n"
+        text += f"   💼 {reg.get('position')}\n"
+        text += f"   📅 Зарегистрирован: {reg.get('registration_date')[:10]}\n\n"
+    if not registrations:
+        text += "📭 Пока нет зарегистрированных участников"
+    text += f"\n📄 Страница {page + 1}/{total_pages}"
+    await message.answer(text, parse_mode="HTML", reply_markup=get_participants_keyboard(event_id, page, total_pages))
+
+@router.callback_query(F.data.startswith("part_prev_"))
+async def part_prev_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    event_id = int(parts[2])
+    page = int(parts[3])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_participants_page(callback.message, db, event_id, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("part_next_"))
+async def part_next_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    event_id = int(parts[2])
+    page = int(parts[3])
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    await show_participants_page(callback.message, db, event_id, page)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("back_to_event_"))
+async def back_to_event_handler(callback: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(callback, db):
+        await callback.answer("⛔ Нет доступа.")
+        return
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    event_id = int(parts[3])
+    event = db.get_event_by_id(event_id)
+    if not event:
+        await callback.answer("❌ Событие не найдено")
+        return
+    registrations = db.get_event_registrations(event_id)
+    analysis = json.loads(event.get('analysis') or '{}')
+    text = (
+        f"🎯 <b>{event.get('title')}</b>\n\n"
+        f"📅 <b>Дата:</b> {event.get('date_str')}\n"
+        f"📍 <b>Место:</b> {event.get('location')}\n"
+        f"🔗 <b>Ссылка:</b> {event.get('url')}\n"
+        f"📊 <b>Оценка AI:</b> {event.get('score')}/100\n"
+        f"🎯 <b>Приоритет:</b> {event.get('priority')}\n"
+        f"👥 <b>Аудитория:</b> {analysis.get('target_audience', 'не указана')}\n\n"
+        f"📝 <b>Описание:</b>\n{event.get('description')[:500] if event.get('description') else 'Нет описания'}.\n\n"
+        f"👥 <b>Зарегистрированные пользователи ({len(registrations)}):</b>\n"
+    )
+    for i, reg in enumerate(registrations[:10], 1):
+        status_icon = "✅" if reg.get('status') == 'approved' else "⏳"
+        text += f"{i}. {status_icon} {reg.get('full_name')} - {reg.get('position')}\n"
+    if len(registrations) > 10:
+        text += f"\n📎 ... и еще {len(registrations) - 10} пользователей"
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=get_event_edit_keyboard(event_id))
+    await callback.answer()

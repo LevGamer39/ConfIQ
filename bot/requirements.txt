@@ -8,4 +8,3 @@ beautifulsoup4
 python-dotenv
 aiofiles
 lxml
-exceptions

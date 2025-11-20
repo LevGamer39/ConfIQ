@@ -1,9 +1,7 @@
 from secret import BOT_TOKEN, GIGACHAT_API_KEY
 
-
 BOT_CONFIG = {
-    'admin_ids': [123456789],
-    'criteria_selection': True
+    'admin_ids': [5159491775],
 }
 
 EVENT_CRITERIA = {
@@ -38,17 +36,5 @@ EVENT_CRITERIA = {
         'МегаФон',
         'РЖД',
         'Росатом'
-    ],
-    'locations': [
-        'Санкт-Петербург',
-        'Ленинградская область',
-        'Москва',
-        'Онлайн'
-    ],
-    'levels': [
-        'экспертный',
-        'отраслевой', 
-        'региональный',
-        'международный'
     ]
 }

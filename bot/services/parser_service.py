@@ -15,11 +15,6 @@ class ParserService:
                 "heuristic": True 
             },
             {
-                "name": "IT HR Hub",
-                "url": "https://ithrhub.com/events",
-                "heuristic": True
-            },
-            {
                 "name": "SPb Prompt",
                 "url": "https://spbprompt.ru/",
                 "heuristic": True

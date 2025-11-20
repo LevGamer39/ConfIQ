@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import re
+from typing import List, Dict
 
 class IcsGenerator:
     @staticmethod
@@ -35,32 +36,69 @@ class IcsGenerator:
             return datetime.now() + timedelta(days=1)
 
     @staticmethod
-    def generate_ics(title, description, location, date_str):
-        dt_start = IcsGenerator._parse_russian_date(date_str)
+    def _create_vevent(event: Dict, now_str: str) -> str:
+        date_for_parsing = event.get('event_datetime') or event.get('date_str', 'не указана')
+        
+        try:
+            dt_start = datetime.strptime(date_for_parsing, '%Y-%m-%d %H:%M:%S')
+        except:
+            dt_start = IcsGenerator._parse_russian_date(event.get('date_str', ''))
+
         dt_end = dt_start + timedelta(hours=2)
         
         dt_format = "%Y%m%dT%H%M%S"
-        now_str = datetime.now().strftime(dt_format)
         start_str = dt_start.strftime(dt_format)
         end_str = dt_end.strftime(dt_format)
         
-        clean_desc = description.replace('\n', '\\n')
+        clean_desc = event.get('description', 'Подробности по ссылке.').replace('\n', '\\n')
+        
+        vevent = (
+            "BEGIN:VEVENT\n"
+            f"DTSTAMP:{now_str}\n"
+            f"UID:{event['id']}-{abs(hash(event['title']+event['location']))}\n"
+            f"DTSTART:{start_str}\n"
+            f"DTEND:{end_str}\n"
+            f"SUMMARY:{event['title']}\n"
+            f"DESCRIPTION:{clean_desc}\n"
+            f"LOCATION:{event['location']}\n"
+            "END:VEVENT\n"
+        )
+        return vevent
+        
+    @staticmethod
+    def generate_ics(title, description, location, date_str):
+        event = {
+            'id': abs(hash(title)),
+            'title': title,
+            'description': description,
+            'location': location,
+            'date_str': date_str,
+        }
+        
+        now_str = datetime.now().strftime("%Y%m%dT%H%M%S")
+        vevent = IcsGenerator._create_vevent(event, now_str)
         
         ics_content = (
             "BEGIN:VCALENDAR\n"
             "VERSION:2.0\n"
             "PRODID:-//Sber AI Media Agent//RU\n"
             "CALSCALE:GREGORIAN\n"
-            "BEGIN:VEVENT\n"
-            f"DTSTAMP:{now_str}\n"
-            f"UID:{now_str}-{abs(hash(title))}@sberagent\n"
-            f"DTSTART:{start_str}\n"
-            f"DTEND:{end_str}\n"
-            f"SUMMARY:{title}\n"
-            f"DESCRIPTION:{clean_desc}\n"
-            f"LOCATION:{location}\n"
-            "END:VEVENT\n"
-            "END:VCALENDAR"
+            f"{vevent}"
+            "END:VCALENDAR\n"
         )
+        return ics_content
+
+    @staticmethod
+    def generate_bulk_ics(events: List[Dict]) -> str:
+        now_str = datetime.now().strftime("%Y%m%dT%H%M%S")
+        vevents = [IcsGenerator._create_vevent(event, now_str) for event in events]
         
-        return ics_content.encode('utf-8')
+        ics_content = (
+            "BEGIN:VCALENDAR\n"
+            "VERSION:2.0\n"
+            "PRODID:-//Sber AI Media Agent//RU\n"
+            "CALSCALE:GREGORIAN\n"
+            f"{''.join(vevents)}"
+            "END:VCALENDAR\n"
+        )
+        return ics_content

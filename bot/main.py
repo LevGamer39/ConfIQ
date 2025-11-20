@@ -8,7 +8,8 @@ from config import BOT_TOKEN, BOT_CONFIG
 from database import FDataBase
 from services.gigachat_service import GigaChatService
 from services.parser_service import ParserService
-from handlers import user_handlers, admin_handlers
+from handlers.user_handlers import router as user_router
+from handlers.admin_handlers import router as admin_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,8 +46,18 @@ async def main():
                 db.remove_admin(OWNER_ID)
                 db.add_admin(OWNER_ID, "Owner", "GreatAdmin")
                 logger.info(f"✅ Owner {OWNER_ID} rights confirmed as GreatAdmin")
+                
+            user_data = db.get_user(OWNER_ID)
+            if not user_data:
+                db.add_user(OWNER_ID, "Owner", "Owner")
+                db.force_approve_user(OWNER_ID)
+                logger.info(f"✅ Owner {OWNER_ID} auto-registered and approved as user")
+            elif user_data.get('status') != 'approved':
+                db.force_approve_user(OWNER_ID)
+                logger.info(f"✅ Owner {OWNER_ID} auto-approved as user")
+                
     except Exception as e:
-        logger.error(f"❌ Admin setup error: {e}")
+        logger.error(f"❌ Owner setup error: {e}")
 
     try:
         gigachat = GigaChatService()
@@ -68,8 +79,8 @@ async def main():
     dp["gigachat"] = gigachat
     dp["parser"] = parser
 
-    dp.include_router(admin_handlers.router)
-    dp.include_router(user_handlers.router)
+    dp.include_router(admin_router)
+    dp.include_router(user_router)
 
     logger.info("🤖 AI Media Agent Sber is ready! Starting polling...")
     
