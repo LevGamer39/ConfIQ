@@ -1,0 +1,11 @@
+aiogram
+flask
+flask-cors
+gigachat
+ics
+requests
+beautifulsoup4
+python-dotenv
+aiofiles
+lxml
+exceptions
