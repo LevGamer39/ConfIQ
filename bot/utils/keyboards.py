@@ -42,7 +42,7 @@ def get_admin_main_kb(role):
     
     btns = [
         [KeyboardButton(text="📝 Управление мероприятиями"), KeyboardButton(text="👥 Управление пользователями")],
-        [KeyboardButton(text="🔄 Сканировать источники"), KeyboardButton(text="🌐 Источники парсинга")], # Новая кнопка
+        [KeyboardButton(text="🔄 Сканировать источники"), KeyboardButton(text="🌐 Источники парсинга")],
         [KeyboardButton(text="📊 Статистика")]
     ]
     if role in ('TechSupport', 'Owner', 'GreatAdmin'): 
@@ -55,7 +55,7 @@ def get_events_mgmt_kb():
     btns = [
         [KeyboardButton(text="📜 Модерация"), KeyboardButton(text="🔍 Поиск (Админ)")],
         [KeyboardButton(text="➕ Создать событие"), KeyboardButton(text="🤝 Добавить партнёрское")],
-        [KeyboardButton(text="📂 Загрузить из файла"), KeyboardButton(text="📂 Экспорт всех (CSV)")], # Новая
+        [KeyboardButton(text="📂 Загрузить из файла"), KeyboardButton(text="📂 Экспорт всех (CSV)")],
         [KeyboardButton(text="📋 Список всех"), KeyboardButton(text="⬅️ Назад в админку")]
     ]
     return ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True)
@@ -92,7 +92,7 @@ def get_position_keyboard() -> ReplyKeyboardMarkup:
 
 def get_profile_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Закрыть", callback_data="close_profile")]
+        [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")]
     ])
 
 def get_admin_role_keyboard() -> ReplyKeyboardMarkup:
@@ -150,7 +150,7 @@ def get_events_keyboard(events: list, current_page: int, total_pages: int) -> In
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"page_{current_page + 1}"))
     
     if nav: buttons.append(nav)
-    buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close_message")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_selection_keyboard(events: list) -> InlineKeyboardMarkup:
@@ -162,7 +162,7 @@ def get_selection_keyboard(events: list) -> InlineKeyboardMarkup:
             buttons.append(row)
             row = []
     if row: buttons.append(row)
-    buttons.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="close_message")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_event_detail_keyboard(event_id: int, url: str, registration_status: str, is_admin: bool = False) -> InlineKeyboardMarkup:
@@ -185,7 +185,7 @@ def get_event_detail_keyboard(event_id: int, url: str, registration_status: str,
     else:
         buttons.append([InlineKeyboardButton(text="📝 Записаться", callback_data=f"request_registration_{event_id}")])
         
-    buttons.append([InlineKeyboardButton(text="🔙 Закрыть", callback_data="close_message")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_moderation_keyboard(event_id: int, current_index: int, total_count: int) -> InlineKeyboardMarkup:
@@ -199,7 +199,8 @@ def get_moderation_keyboard(event_id: int, current_index: int, total_count: int)
             InlineKeyboardButton(text="⬅️", callback_data=f"mod_prev_{current_index - 1}" if current_index > 0 else "ignore"),
             InlineKeyboardButton(text=f"{current_index + 1}/{total_count}", callback_data="ignore"),
             InlineKeyboardButton(text="➡️", callback_data=f"mod_next_{current_index + 1}" if current_index < total_count - 1 else "ignore")
-        ]
+        ],
+        [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -222,6 +223,7 @@ def get_user_approval_pagination_keyboard(users: list, current_page: int, total_
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"user_approval_next_{current_page + 1}"))
     
     if nav: buttons.append(nav)
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_events_list_keyboard(events: list, current_page: int, total_pages: int) -> InlineKeyboardMarkup:
@@ -235,7 +237,7 @@ def get_events_list_keyboard(events: list, current_page: int, total_pages: int) 
     if nav: buttons.append(nav)
     
     buttons.append([InlineKeyboardButton(text="➕ Создать", callback_data="create_event")])
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_event_edit_keyboard(event_id: int) -> InlineKeyboardMarkup:
@@ -254,7 +256,7 @@ def get_event_edit_keyboard(event_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_event_confirm_{event_id}"),
-            InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")
+            InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")
         ]
     ])
 
@@ -273,6 +275,7 @@ def get_participants_keyboard(event_id: int, current_page: int, total_pages: int
         InlineKeyboardButton(text="📊 Экспорт в файл", callback_data=f"export_participants_{event_id}"),
         InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_event_{event_id}")
     ])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_employees_list_keyboard(users):
@@ -285,7 +288,7 @@ def get_employees_list_keyboard(users):
             )
         ])
     
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_role_management_keyboard(users):
@@ -298,7 +301,7 @@ def get_role_management_keyboard(users):
             )
         ])
     
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_reg_moderation_keyboard(user_id: int, event_id: int, current_page: int, total_pages: int) -> InlineKeyboardMarkup:
@@ -317,7 +320,7 @@ def get_reg_moderation_keyboard(user_id: int, event_id: int, current_page: int, 
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"reg_next_{current_page + 1}"))
     
     if nav: buttons.append(nav)
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -337,5 +340,88 @@ def get_bulk_moderation_keyboard(event_id: int, current_page: int, total_pages: 
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"bulk_next_{current_page + 1}"))
     
     if nav: buttons.append(nav)
-    buttons.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_events_pagination_keyboard(events: list, current_page: int, total_pages: int, event_type: str = 'main') -> InlineKeyboardMarkup:
+    buttons = []
+    
+    # Кнопки навигации
+    nav_buttons = []
+    if current_page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"{event_type}_page_{current_page - 1}"))
+    
+    nav_buttons.append(InlineKeyboardButton(text=f"{current_page + 1}/{total_pages}", callback_data="ignore"))
+    
+    if current_page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"{event_type}_page_{current_page + 1}"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # Кнопка для просмотра деталей текущего мероприятия
+    if events:
+        buttons.append([InlineKeyboardButton(text="🔍 Подробнее", callback_data=f"event_details_{events[0]['id']}")])
+    
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_admin_events_pagination_keyboard(events: list, current_page: int, total_pages: int) -> InlineKeyboardMarkup:
+    buttons = []
+    
+    # Кнопки навигации
+    nav_buttons = []
+    if current_page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_events_prev_{current_page - 1}"))
+    
+    nav_buttons.append(InlineKeyboardButton(text=f"{current_page + 1}/{total_pages}", callback_data="ignore"))
+    
+    if current_page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_events_next_{current_page + 1}"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # Кнопки действий
+    if events:
+        buttons.append([
+            InlineKeyboardButton(text="🔍 Детали", callback_data=f"admin_event_details_{events[0]['id']}"),
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin_event_details_{events[0]['id']}")
+        ])
+    
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+def get_search_filters_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🎯 IT-тематика"), KeyboardButton(text="🤖 AI/ML")],
+        [KeyboardButton(text="📊 Data Science"), KeyboardButton(text="☁️ Cloud/DevOps")],
+        [KeyboardButton(text="🔐 Кибербезопасность"), KeyboardButton(text="💼 Менеджмент")],
+        [KeyboardButton(text="🎓 Для начинающих"), KeyboardButton(text="👨‍💻 Для Senior")],
+        [KeyboardButton(text="📍 Санкт-Петербург"), KeyboardButton(text="🌐 Онлайн")],
+        [KeyboardButton(text="🔥 Высокий приоритет"), KeyboardButton(text="📅 На этой неделе")],
+        [KeyboardButton(text="🔍 Все мероприятия"), KeyboardButton(text="❌ Отменить поиск")]
+    ], resize_keyboard=True)
+
+def get_admin_search_filters_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🎯 IT-тематика"), KeyboardButton(text="🤖 AI/ML")],
+        [KeyboardButton(text="📊 Data Science"), KeyboardButton(text="☁️ Cloud/DevOps")],
+        [KeyboardButton(text="🔐 Кибербезопасность"), KeyboardButton(text="💼 Менеджмент")],
+        [KeyboardButton(text="📍 Санкт-Петербург"), KeyboardButton(text="🌐 Онлайн")],
+        [KeyboardButton(text="✅ Одобренные"), KeyboardButton(text="⏳ На модерации")],
+        [KeyboardButton(text="🤝 Партнёрские"), KeyboardButton(text="📂 Из файла")],
+        [KeyboardButton(text="🔍 Все мероприятия"), KeyboardButton(text="❌ Отменить поиск")]
+    ], resize_keyboard=True)
+
+def get_parsing_filters_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🎯 IT-тематика"), KeyboardButton(text="🤖 AI/ML")],
+        [KeyboardButton(text="📊 Data Science"), KeyboardButton(text="☁️ Cloud/DevOps")],
+        [KeyboardButton(text="🔐 Кибербезопасность"), KeyboardButton(text="💼 Менеджмент")],
+        [KeyboardButton(text="📍 Санкт-Петербург"), KeyboardButton(text="🌐 Онлайн")],
+        [KeyboardButton(text="🎓 Образовательные"), KeyboardButton(text="👨‍💻 Технические")],
+        [KeyboardButton(text="🔍 Все темы"), KeyboardButton(text="❌ Отменить")]
+    ], resize_keyboard=True)

@@ -211,7 +211,7 @@ class FDataBase:
             return bool(self.__cur.fetchone())
         except: return False
 
-    def get_events_paginated(self, telegram_id: int, page: int = 0, limit: int = 5, source: str = None) -> List[Dict]:
+    def get_events_paginated(self, telegram_id: int, page: int = 0, limit: int = 1, source: str = None) -> List[Dict]:
         try:
             user_rank = self._get_user_rank(telegram_id)
             offset = page * limit
@@ -223,7 +223,88 @@ class FDataBase:
             params.extend([limit, offset])
             self.__cur.execute(query, params)
             return self._dict_factory(self.__cur.fetchall())
-        except: return []
+        except Exception as e:
+            print(f"Error in get_events_paginated: {e}")
+            return []
+
+    def get_high_priority_events_paginated(self, telegram_id: int, page: int = 0, limit: int = 1) -> List[Dict]:
+        try:
+            user_rank = self._get_user_rank(telegram_id)
+            offset = page * limit
+            self.__cur.execute(
+                "SELECT * FROM events WHERE priority = 'high' AND status = 'approved' AND required_rank <= ? AND event_datetime IS NOT NULL ORDER BY score DESC LIMIT ? OFFSET ?",
+                (user_rank, limit, offset)
+            )
+            return self._dict_factory(self.__cur.fetchall())
+        except Exception as e:
+            print(f"Error in get_high_priority_events_paginated: {e}")
+            return []
+
+    def get_total_priority_events(self, telegram_id: int) -> int:
+        try:
+            user_rank = self._get_user_rank(telegram_id)
+            self.__cur.execute(
+                "SELECT COUNT(*) FROM events WHERE priority = 'high' AND status = 'approved' AND required_rank <= ? AND event_datetime IS NOT NULL",
+                (user_rank,)
+            )
+            res = self.__cur.fetchone()
+            return res[0] if res else 0
+        except:
+            return 0
+
+    def get_partner_events_paginated(self, telegram_id: int, page: int = 0, limit: int = 1) -> List[Dict]:
+        try:
+            user_rank = self._get_user_rank(telegram_id)
+            offset = page * limit
+            self.__cur.execute(
+                "SELECT * FROM events WHERE source = 'partner' AND status = 'approved' AND required_rank <= ? AND event_datetime IS NOT NULL ORDER BY event_datetime ASC LIMIT ? OFFSET ?",
+                (user_rank, limit, offset)
+            )
+            return self._dict_factory(self.__cur.fetchall())
+        except Exception as e:
+            print(f"Error in get_partner_events_paginated: {e}")
+            return []
+
+    def get_total_partner_events(self, telegram_id: int) -> int:
+        try:
+            user_rank = self._get_user_rank(telegram_id)
+            self.__cur.execute(
+                "SELECT COUNT(*) FROM events WHERE source = 'partner' AND status = 'approved' AND required_rank <= ? AND event_datetime IS NOT NULL",
+                (user_rank,)
+            )
+            res = self.__cur.fetchone()
+            return res[0] if res else 0
+        except:
+            return 0
+
+    def get_user_events_paginated(self, telegram_id: int, page: int = 0, limit: int = 1) -> List[Dict]:
+        try:
+            user = self.get_user(telegram_id)
+            if not user:
+                return []
+            offset = page * limit
+            self.__cur.execute(
+                "SELECT e.*, ue.status, ue.registration_date FROM events e JOIN user_events ue ON e.id = ue.event_id WHERE ue.user_id = ? ORDER BY e.event_datetime DESC LIMIT ? OFFSET ?",
+                (user['id'], limit, offset)
+            )
+            return self._dict_factory(self.__cur.fetchall())
+        except Exception as e:
+            print(f"Error in get_user_events_paginated: {e}")
+            return []
+
+    def get_total_user_events(self, telegram_id: int) -> int:
+        try:
+            user = self.get_user(telegram_id)
+            if not user:
+                return 0
+            self.__cur.execute(
+                "SELECT COUNT(*) FROM user_events WHERE user_id = ?",
+                (user['id'],)
+            )
+            res = self.__cur.fetchone()
+            return res[0] if res else 0
+        except:
+            return 0
 
     def get_partner_events(self, telegram_id: int) -> List[Dict]:
         try:
@@ -302,7 +383,7 @@ class FDataBase:
             return True
         except: return False
         
-    def get_all_events_paginated(self, page: int = 0, limit: int = 10) -> List[Dict]:
+    def get_all_events_paginated(self, page: int = 0, limit: int = 1) -> List[Dict]:
         try:
             offset = page * limit
             self.__cur.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset))
@@ -555,3 +636,66 @@ class FDataBase:
             res = self.__cur.fetchone()
             return res[0] if res else 0
         except: return 0
+    def search_events_with_filters(self, telegram_id: int, keywords: list, date_filter: str = None, priority_filter: str = None) -> List[Dict]:
+        try:
+            user_rank = self._get_user_rank(telegram_id)
+            query = "SELECT * FROM events WHERE status = 'approved' AND required_rank <= ? AND event_datetime IS NOT NULL"
+            params = [user_rank]
+            
+            # Фильтр по ключевым словам
+            if keywords:
+                query += " AND (1=0"
+                for kw in keywords:
+                    query += " OR title LIKE ? OR description LIKE ?"
+                    params.extend([f"%{kw}%", f"%{kw}%"])
+                query += ")"
+            
+            # Фильтр по дате
+            if date_filter == "week":
+                query += " AND event_datetime BETWEEN datetime('now') AND datetime('now', '+7 days')"
+            
+            # Фильтр по приоритету
+            if priority_filter == "high":
+                query += " AND priority = 'high'"
+            
+            query += " ORDER BY priority DESC, score DESC, event_datetime ASC LIMIT 50"
+            
+            self.__cur.execute(query, params)
+            return self._dict_factory(self.__cur.fetchall())
+        except Exception as e:
+            print(f"Error in search_events_with_filters: {e}")
+            return []
+
+    def search_admin_events_with_filters(self, keywords: list, status_filter: str = None, source_filter: str = None, limit: int = 20) -> List[Dict]:
+        try:
+            query = "SELECT * FROM events WHERE 1=1"
+            params = []
+            
+            # Фильтр по ключевым словам
+            if keywords:
+                query += " AND (1=0"
+                for kw in keywords:
+                    query += " OR title LIKE ? OR description LIKE ?"
+                    params.extend([f"%{kw}%", f"%{kw}%"])
+                query += ")"
+            
+            # Фильтр по статусу
+            if status_filter:
+                if status_filter == "approved":
+                    query += " AND status = 'approved'"
+                elif status_filter in ["pending", "new"]:
+                    query += " AND (status = 'pending' OR status = 'new')"
+            
+            # Фильтр по источнику
+            if source_filter:
+                query += " AND source = ?"
+                params.append(source_filter)
+            
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(limit)
+            
+            self.__cur.execute(query, params)
+            return self._dict_factory(self.__cur.fetchall())
+        except Exception as e:
+            print(f"Error in search_admin_events_with_filters: {e}")
+            return []

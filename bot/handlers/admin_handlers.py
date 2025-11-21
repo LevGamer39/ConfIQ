@@ -403,22 +403,45 @@ async def scan_sources_start(message: types.Message, state: FSMContext, db: FDat
         await message.answer("⛔ У вас нет прав на сканирование.")
         return
     await state.set_state(AdminStates.waiting_for_parsing_criteria)
-    await message.answer("🔍 <b>Настройка парсинга</b>\nВведите ключевые слова через запятую или 'Все':", parse_mode="HTML", reply_markup=get_cancel_keyboard())
+    await message.answer(
+        "🔍 <b>Настройка парсинга</b>\nВыберите темы для поиска:",
+        parse_mode="HTML", 
+        reply_markup=get_parsing_filters_keyboard()
+    )
 
 @router.message(AdminStates.waiting_for_parsing_criteria)
 async def scan_sources_process(message: types.Message, state: FSMContext, db: FDataBase, parser, gigachat):
     admin = check_access(message, db)
     if not admin: return
+    
     if message.text == "❌ Отменить":
         await handle_cancel(message, state, db, get_admin_main_kb(admin['role']))
         return
 
-    criteria = []
-    if message.text.lower() != "все":
-        criteria = [w.strip() for w in message.text.split(",") if w.strip()]
+    # Карта фильтров для парсинга
+    parsing_filters = {
+        "🎯 IT-тематика": ["IT", "разработка", "программирование", "software"],
+        "🤖 AI/ML": ["AI", "искусственный интеллект", "ML", "machine learning", "нейросеть"],
+        "📊 Data Science": ["data science", "анализ данных", "big data", "data analysis"],
+        "☁️ Cloud/DevOps": ["cloud", "облако", "devops", "aws", "azure", "gcp"],
+        "🔐 Кибербезопасность": ["кибербезопасность", "cybersecurity", "security", "безопасность"],
+        "💼 Менеджмент": ["менеджмент", "управление", "project management", "руководство"],
+        "📍 Санкт-Петербург": ["санкт-петербург", "спб", "петербург"],
+        "🌐 Онлайн": ["онлайн", "online", "webinar"],
+        "🎓 Образовательные": ["образование", "обучение", "курс", "семинар"],
+        "👨‍💻 Технические": ["технический", "technical", "engineering"],
+        "🔍 Все темы": []
+    }
+    
+    if message.text not in parsing_filters:
+        await message.answer("❌ Пожалуйста, выберите тему из меню.")
+        return
+    
+    criteria = parsing_filters[message.text]
     
     await state.clear()
-    status_msg = await message.answer(f"⏳ <b>Сканирование...</b>\nКритерии: {', '.join(criteria) if criteria else 'Все'}", parse_mode="HTML")
+    criteria_text = message.text if message.text == "🔍 Все темы" else ", ".join(criteria)
+    status_msg = await message.answer(f"⏳ <b>Сканирование...</b>\nТема: {criteria_text}", parse_mode="HTML")
     
     try:
         db_sources = await asyncio.to_thread(db.get_active_sources)
@@ -659,19 +682,65 @@ async def process_file_upload(message: types.Message, state: FSMContext, db: FDa
 async def list_all_events(message: types.Message, db: FDataBase):
     admin = check_access(message, db)
     if not admin: return
-    await show_events_list_page(message, db, 0)
+    await show_admin_events_list_page(message, db, 0)
 
-async def show_events_list_page(message: types.Message, db: FDataBase, page: int):
-    events = await asyncio.to_thread(db.get_all_events_paginated, page, 10)
+async def show_admin_events_list_page(message: types.Message, db: FDataBase, page: int):
+    events = await asyncio.to_thread(db.get_all_events_paginated, page, 1)
     total = await asyncio.to_thread(db.get_total_events_count)
-    total_pages = max(1, (total + 9) // 10)
     
-    text = "📋 <b>Все мероприятия</b>\n"
-    for e in events:
-        icon = "🤝" if e['source'] == 'partner' else "📂" if e['source'] == 'file' else "🤖"
-        status = "✅" if e['status'] == 'approved' else "⏳"
-        text += f"{icon} {status} <b>{e['title']}</b>\nID: /admin_event_details_{e['id']}\n\n"
-    await message.answer(text, parse_mode="HTML", reply_markup=get_events_list_keyboard(events, page, total_pages))
+    if not events:
+        await message.answer("📭 Мероприятий пока нет.")
+        return
+
+    event = events[0]
+    
+    try:
+        analysis = json.loads(event['analysis']) if event.get('analysis') else {}
+    except:
+        analysis = {}
+    
+    status_icon = "✅" if event['status'] == 'approved' else "⏳" if event['status'] in ['new', 'pending'] else "❌"
+    source_icon = "🤝" if event['source'] == 'partner' else "📂" if event['source'] == 'file' else "🤖"
+    
+    text = (
+        f"📋 <b>Все мероприятия</b> ({page + 1}/{max(1, total)})\n\n"
+        f"{status_icon} {source_icon} <b>{event['title']}</b>\n"
+        f"📅 {event['date_str']}\n"
+        f"📍 {event['location']}\n"
+        f"🔗 {event['url'] or 'Нет ссылки'}\n"
+        f"📊 Score: {event['score']} | Status: {event['status']}\n"
+        f"💡 AI Summary: {analysis.get('summary', '-')}\n\n"
+        f"📝 <b>Описание:</b>\n{event['description'][:300]}..."
+    )
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=get_admin_events_pagination_keyboard(events, page, max(1, total)))
+
+def get_admin_events_pagination_keyboard(events: list, current_page: int, total_pages: int) -> InlineKeyboardMarkup:
+    buttons = []
+    
+    # Кнопки навигации
+    nav_buttons = []
+    if current_page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_events_prev_{current_page - 1}"))
+    
+    nav_buttons.append(InlineKeyboardButton(text=f"{current_page + 1}/{total_pages}", callback_data="ignore"))
+    
+    if current_page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_events_next_{current_page + 1}"))
+    
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    
+    # Кнопки действий
+    if events:
+        buttons.append([
+            InlineKeyboardButton(text="🔍 Детали", callback_data=f"admin_event_details_{events[0]['id']}"),
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin_event_details_{events[0]['id']}")
+        ])
+    
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 @router.callback_query(F.data.startswith("admin_events_prev_"))
 async def admin_events_prev(c: types.CallbackQuery, db: FDataBase):
@@ -679,7 +748,7 @@ async def admin_events_prev(c: types.CallbackQuery, db: FDataBase):
     if not admin: return
     page = int(c.data.split("_")[3])
     await c.message.delete()
-    await show_events_list_page(c.message, db, page)
+    await show_admin_events_list_page(c.message, db, page)
 
 @router.callback_query(F.data.startswith("admin_events_next_"))
 async def admin_events_next(c: types.CallbackQuery, db: FDataBase):
@@ -687,7 +756,141 @@ async def admin_events_next(c: types.CallbackQuery, db: FDataBase):
     if not admin: return
     page = int(c.data.split("_")[3])
     await c.message.delete()
-    await show_events_list_page(c.message, db, page)
+    await show_admin_events_list_page(c.message, db, page)
+
+@router.message(lambda msg: msg.text == "🔍 Поиск (Админ)")
+async def admin_search_start(message: types.Message, state: FSMContext, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin:
+        await message.answer("⛔ У вас нет доступа к системе управления.")
+        return
+    await state.set_state(AdminStates.waiting_for_search_text)
+    await message.answer(
+        "🔍 <b>Выберите фильтры для поиска по базе:</b>\n"
+        "Можно выбрать несколько фильтров по очереди",
+        parse_mode="HTML",
+        reply_markup=get_admin_search_filters_keyboard()
+    )
+
+@router.message(AdminStates.waiting_for_search_text)
+async def admin_search_process(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить поиск":
+        await handle_cancel(message, state, db, get_events_mgmt_kb())
+        return
+    
+    # Карта фильтров для админского поиска
+    filter_map = {
+        "🎯 IT-тематика": ["IT", "разработка", "программирование"],
+        "🤖 AI/ML": ["AI", "искусственный интеллект", "ML", "machine learning"],
+        "📊 Data Science": ["data science", "анализ данных", "big data"],
+        "☁️ Cloud/DevOps": ["cloud", "облако", "devops", "aws", "azure"],
+        "🔐 Кибербезопасность": ["кибербезопасность", "cybersecurity", "security"],
+        "💼 Менеджмент": ["менеджмент", "управление", "project management"],
+        "📍 Санкт-Петербург": ["санкт-петербург", "спб", "петербург"],
+        "🌐 Онлайн": ["онлайн", "online", "webinar"],
+        "✅ Одобренные": ["approved"],
+        "⏳ На модерации": ["pending", "new"],
+        "🤝 Партнёрские": ["partner"],
+        "📂 Из файла": ["file"],
+        "🔍 Все мероприятия": ["all"]
+    }
+    
+    if message.text not in filter_map:
+        await message.answer("❌ Пожалуйста, выберите фильтр из меню.")
+        return
+    
+    selected_filter = filter_map[message.text]
+    
+    # Получаем текущие фильтры из состояния
+    current_data = await state.get_data()
+    current_filters = current_data.get('search_filters', [])
+    
+    if message.text == "🔍 Все мероприятия":
+        current_filters = []
+        await state.update_data(search_filters=[])
+        await message.answer("🔍 <b>Поиск по всем мероприятиям</b>", parse_mode="HTML")
+    else:
+        if selected_filter[0] in current_filters:
+            current_filters = [f for f in current_filters if f != selected_filter[0]]
+            await message.answer(f"❌ Фильтр '{message.text}' удален")
+        else:
+            current_filters.append(selected_filter[0])
+            await message.answer(f"✅ Фильтр '{message.text}' добавлен")
+        
+        await state.update_data(search_filters=current_filters)
+    
+    # Показываем активные фильтры
+    if current_filters:
+        active_filters = []
+        for filter_name, filter_values in filter_map.items():
+            if filter_values[0] in current_filters:
+                active_filters.append(filter_name)
+        
+        filters_text = "\n".join([f"• {f}" for f in active_filters])
+        await message.answer(
+            f"📋 <b>Активные фильтры:</b>\n{filters_text}\n\n"
+            f"Выберите еще фильтры или нажмите '🔍 Все мероприятия' для поиска",
+            parse_mode="HTML",
+            reply_markup=get_admin_search_filters_keyboard()
+        )
+    else:
+        await message.answer(
+            "🔍 <b>Поиск по всем мероприятиям</b>\n"
+            "Выберите фильтры для уточнения поиска",
+            parse_mode="HTML",
+            reply_markup=get_admin_search_filters_keyboard()
+        )
+    
+    # Выполняем поиск при выборе фильтров
+    if current_filters and message.text != "🔍 Все мероприятия":
+        await perform_admin_smart_search(message, state, db, current_filters)
+
+async def perform_admin_smart_search(message: types.Message, state: FSMContext, db: FDataBase, filters: list):
+    wait_msg = await message.answer("⏳ <b>Ищу мероприятия...</b>", parse_mode="HTML")
+    
+    try:
+        # Преобразуем фильтры в параметры поиска
+        keywords = []
+        status_filter = None
+        source_filter = None
+        
+        for filter_type in filters:
+            if filter_type in ["approved", "pending", "new"]:
+                status_filter = filter_type
+            elif filter_type in ["partner", "file", "parser"]:
+                source_filter = filter_type
+            else:
+                keywords.append(filter_type)
+        
+        # Выполняем поиск
+        results = await asyncio.to_thread(db.search_admin_events_with_filters, 
+                                        keywords, 
+                                        status_filter, 
+                                        source_filter,
+                                        20)
+        
+        await state.clear()
+        await wait_msg.delete()
+        
+        if not results:
+            await message.answer(
+                "🔍 <b>Ничего не найдено</b>", 
+                parse_mode="HTML", 
+                reply_markup=get_events_mgmt_kb()
+            )
+            return
+            
+        text = "🔍 <b>Результаты поиска:</b>\n\n"
+        for res in results:
+            status_icon = "✅" if res['status'] == 'approved' else "⏳"
+            source_icon = "🤝" if res['source'] == 'partner' else "📂" if res['source'] == 'file' else "🤖"
+            text += f"{status_icon}{source_icon} <b>{res['title']}</b>\nID: /admin_event_details_{res['id']}\n\n"
+        
+        await message.answer(text, parse_mode="HTML", reply_markup=get_events_mgmt_kb())
+        
+    except Exception as e:
+        await wait_msg.delete()
+        await message.answer(f"❌ Ошибка при поиске: {str(e)}")
 
 @router.message(lambda msg: msg.text and msg.text.startswith("/admin_event_details_"))
 async def admin_det_cmd(message: types.Message, db: FDataBase):
@@ -948,7 +1151,7 @@ async def show_user_approval_page(message: types.Message, db: FDataBase, page: i
         return
     user = users[0]
     text = (
-        f"👤 <b>ЗАЯВКА #{user['id']}</b>\n\n"
+        f"👤 <b>ЗАЯВКА #{user['id']}</b> ({page+1}/{max(1, total)})\n\n"
         f"👤 ФИО: <b>{user.get('full_name')}</b>\n"
         f"💼 Должность: {user.get('position')}\n"
         f"📧 Email: {user.get('email')}\n"
@@ -1260,3 +1463,65 @@ async def change_role_fin(m: types.Message, state: FSMContext, db: FDataBase):
     db.update_admin_role(d['change_role_id'], role)
     await m.answer("✅ Обновлено.", reply_markup=get_admin_management_keyboard())
     await state.clear()
+@router.callback_query(F.data == "back_to_main_menu")
+async def back_to_main_menu_callback(callback: types.CallbackQuery, db: FDataBase):
+    try: 
+        await callback.message.delete()
+    except: 
+        pass
+    
+    admin = db.get_admin(callback.from_user.id)
+    is_admin = bool(admin)
+    await callback.message.answer(
+        "🔙 <b>Главное меню</b>",
+        reply_markup=get_main_keyboard(is_admin),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+@router.callback_query(F.data == "close_message")
+async def close_msg(callback: types.CallbackQuery, db: FDataBase):
+    try: 
+        await callback.message.delete()
+    except: 
+        pass
+    
+    admin = db.get_admin(callback.from_user.id)
+    is_admin = bool(admin)
+    await callback.message.answer(
+        "🔙 <b>Главное меню</b>",
+        reply_markup=get_main_keyboard(is_admin),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "close_profile")
+async def close_prof(callback: types.CallbackQuery, db: FDataBase):
+    try: 
+        await callback.message.delete()
+    except: 
+        pass
+    
+    admin = db.get_admin(callback.from_user.id)
+    is_admin = bool(admin)
+    await callback.message.answer(
+        "🔙 <b>Главное меню</b>",
+        reply_markup=get_main_keyboard(is_admin),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "back_to_main_menu")
+async def back_to_main_menu_callback(callback: types.CallbackQuery, db: FDataBase):
+    try: 
+        await callback.message.delete()
+    except: 
+        pass
+    
+    admin = db.get_admin(callback.from_user.id)
+    is_admin = bool(admin)
+    await callback.message.answer(
+        "🔙 <b>Главное меню</b>",
+        reply_markup=get_main_keyboard(is_admin),
+        parse_mode="HTML"
+    )
+    await callback.answer()
