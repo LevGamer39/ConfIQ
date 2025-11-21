@@ -43,14 +43,20 @@ class IcsGenerator:
             dt_start = datetime.strptime(date_for_parsing, '%Y-%m-%d %H:%M:%S')
         except:
             dt_start = IcsGenerator._parse_russian_date(event.get('date_str', ''))
-
-        dt_end = dt_start + timedelta(hours=2)
+        
+        if any(word in event.get('title', '').lower() for word in ['конференция', 'форум', 'фестиваль']):
+            dt_end = dt_start + timedelta(hours=8)
+        elif any(word in event.get('title', '').lower() for word in ['митап', 'встреча', 'семинар']):
+            dt_end = dt_start + timedelta(hours=3)
+        else:
+            dt_end = dt_start + timedelta(hours=2)
         
         dt_format = "%Y%m%dT%H%M%S"
         start_str = dt_start.strftime(dt_format)
         end_str = dt_end.strftime(dt_format)
         
         clean_desc = event.get('description', 'Подробности по ссылке.').replace('\n', '\\n')
+        clean_title = event.get('title', 'Мероприятие').replace('\n', ' ')
         
         vevent = (
             "BEGIN:VEVENT\n"
@@ -58,11 +64,15 @@ class IcsGenerator:
             f"UID:{event['id']}-{abs(hash(event['title']+event['location']))}\n"
             f"DTSTART:{start_str}\n"
             f"DTEND:{end_str}\n"
-            f"SUMMARY:{event['title']}\n"
+            f"SUMMARY:{clean_title}\n"
             f"DESCRIPTION:{clean_desc}\n"
             f"LOCATION:{event['location']}\n"
-            "END:VEVENT\n"
         )
+        
+        if event.get('url'):
+            vevent += f"URL:{event['url']}\n"
+            
+        vevent += "END:VEVENT\n"
         return vevent
         
     @staticmethod

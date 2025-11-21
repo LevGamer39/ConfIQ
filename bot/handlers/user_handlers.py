@@ -1,9 +1,10 @@
 from aiogram import Router, F, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile
+from aiogram.types import BufferedInputFile, ReplyKeyboardMarkup, KeyboardButton
 import json
-from typing import List, Dict
+import asyncio
+from datetime import datetime, timedelta
 
 from utils.keyboards import *
 from utils.states import UserStates
@@ -20,18 +21,17 @@ async def start(message: types.Message, db: FDataBase, state: FSMContext):
     if user:
         if user.get('status') != 'approved' and not admin:
             await message.answer(
-                "⏳ <b>Ваш аккаунт ожидает подтверждения</b>\n\n"
-                "Администратор проверит ваши данные и активирует аккаунт.",
+                "⏳ <b>Ваш аккаунт ожидает подтверждения администратором.</b>\n"
+                "Вам придет уведомление, когда доступ будет открыт.",
                 parse_mode="HTML"
             )
             return
         
         db.update_user_activity(message.from_user.id)
-        
         is_admin = bool(admin)
         await message.answer(
             "👋 <b>Добро пожаловать в Eventpedia!</b>\n\n"
-            "Ваш персональный помощник по мероприятиям.",
+            "Здесь вы найдете актуальные IT-мероприятия, сможете записаться на них и добавить в свой календарь.",
             reply_markup=get_main_keyboard(is_admin),
             parse_mode="HTML"
         )
@@ -39,106 +39,77 @@ async def start(message: types.Message, db: FDataBase, state: FSMContext):
     
     await state.set_state(UserStates.waiting_for_full_name)
     await message.answer(
-        "👋 <b>Добро пожаловать в Eventpedia!</b>\n\n"
-        "Давайте зарегистрируем ваш аккаунт.\n"
-        "📝 <b>Введите ваше полное ФИО:</b>",
+        "👋 <b>Добро пожаловать!</b>\n\n"
+        "Для доступа к мероприятиям необходимо зарегистрироваться.\n"
+        "📝 <b>Введите ваше ФИО:</b>",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
 
 @router.message(UserStates.waiting_for_full_name)
-async def process_full_name(message: types.Message, state: FSMContext, db: FDataBase):
+async def process_full_name(message: types.Message, state: FSMContext):
     if message.text == "❌ Отменить":
         await state.clear()
-        await message.answer("Регистрация отменена")
+        await message.answer("Регистрация отменена", reply_markup=types.ReplyKeyboardRemove())
         return
     
-    full_name = message.text.strip()
-    if len(full_name) < 2:
-        await message.answer("❌ Введите корректное ФИО (минимум 2 символа):")
+    if len(message.text) < 2:
+        await message.answer("❌ Слишком короткое имя. Пожалуйста, введите ФИО:")
         return
     
-    await state.update_data(full_name=full_name)
+    await state.update_data(full_name=message.text)
     await state.set_state(UserStates.waiting_for_email)
-    await message.answer(
-        "📧 <b>Введите ваш email:</b>\n\n"
-        "На этот email будут приходить уведомления о мероприятиях.",
-        parse_mode="HTML"
-    )
+    await message.answer("📧 <b>Введите ваш email:</b>", parse_mode="HTML")
 
 @router.message(UserStates.waiting_for_email)
-async def process_email(message: types.Message, state: FSMContext, db: FDataBase):
+async def process_email(message: types.Message, state: FSMContext):
     if message.text == "❌ Отменить":
         await state.clear()
         await message.answer("Регистрация отменена")
         return
     
-    email = message.text.strip()
-    if not '@' in email or not '.' in email:
-        await message.answer("❌ Введите корректный email адрес:")
+    if '@' not in message.text:
+        await message.answer("❌ Некорректный email. Попробуйте снова:")
         return
     
-    await state.update_data(email=email)
+    await state.update_data(email=message.text)
     await state.set_state(UserStates.waiting_for_phone)
-    await message.answer(
-        "📞 <b>Введите ваш номер телефона:</b>\n\n"
-        "Номер будет использоваться для связи по мероприятиям.",
-        parse_mode="HTML"
-    )
+    await message.answer("📞 <b>Введите ваш номер телефона:</b>", parse_mode="HTML")
 
 @router.message(UserStates.waiting_for_phone)
-async def process_phone(message: types.Message, state: FSMContext, db: FDataBase):
+async def process_phone(message: types.Message, state: FSMContext):
     if message.text == "❌ Отменить":
         await state.clear()
         await message.answer("Регистрация отменена")
         return
     
-    phone = message.text.strip()
-    await state.update_data(phone=phone)
+    await state.update_data(phone=message.text)
     await state.set_state(UserStates.waiting_for_position)
     await message.answer(
-        "💼 <b>Выберите вашу должность:</b>\n\n"
-        "Это поможет нам подбирать мероприятия, соответствующие вашему уровню.",
+        "💼 <b>Выберите вашу должность:</b>", 
         parse_mode="HTML",
         reply_markup=get_position_keyboard()
     )
 
 @router.message(UserStates.waiting_for_position)
-async def process_position(message: types.Message, state: FSMContext, db: FDataBase):
-    position_map = {
-        "👨‍💻 Стажер": "Стажер",
-        "👨‍💻 Junior разработчик": "Junior разработчик", 
-        "👨‍💻 Middle разработчик": "Middle разработчик",
-        "👨‍💻 Senior разработчик": "Senior разработчик",
-        "👨‍💻 Team Lead": "Team Lead",
-        "👨‍💼 Менеджер проектов": "Менеджер проектов",
-        "👨‍💼 Руководитель отдела": "Руководитель отдела",
-        "👨‍💼 Директор": "Директор"
-    }
-    
-    if message.text not in position_map:
-        await message.answer("❌ Пожалуйста, выберите должность из предложенных кнопок:")
+async def process_position(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        await message.answer("Регистрация отменена")
         return
     
-    position = position_map[message.text]
-    await state.update_data(position=position)
-    
+    await state.update_data(position=message.text)
     data = await state.get_data()
     
     text = (
-        "✅ <b>Проверьте ваши данные:</b>\n\n"
-        f"👤 <b>ФИО:</b> {data['full_name']}\n"
-        f"📧 <b>Email:</b> {data['email']}\n"
-        f"📞 <b>Телефон:</b> {data['phone']}\n"
-        f"💼 <b>Должность:</b> {position}\n\n"
+        "✅ <b>Проверьте данные:</b>\n\n"
+        f"👤 ФИО: {data['full_name']}\n"
+        f"📧 Email: {data['email']}\n"
+        f"📞 Тел: {data['phone']}\n"
+        f"💼 Должность: {message.text}\n\n"
         "Всё верно?"
     )
-    
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=get_registration_confirm_keyboard()
-    )
+    await message.answer(text, parse_mode="HTML", reply_markup=get_registration_confirm_keyboard())
 
 @router.callback_query(F.data == "confirm_registration")
 async def confirm_registration_handler(callback: types.CallbackQuery, state: FSMContext, db: FDataBase):
@@ -146,7 +117,7 @@ async def confirm_registration_handler(callback: types.CallbackQuery, state: FSM
     
     success = db.add_user(
         callback.from_user.id,
-        callback.from_user.username,
+        callback.from_user.username or "unknown",
         data['full_name']
     )
     
@@ -157,510 +128,486 @@ async def confirm_registration_handler(callback: types.CallbackQuery, state: FSM
             phone=data['phone'],
             position=data['position']
         )
-        
-        user = db.get_user(callback.from_user.id)
-        admin = db.get_admin(callback.from_user.id)
-        
         await state.clear()
         
+        admin = db.get_admin(callback.from_user.id)
         if admin:
-            await callback.message.edit_text(
-                "✅ <b>Регистрация завершена!</b>\n\n"
-                "Вы зарегистрированы как администратор.\n"
-                "Теперь вы можете пользоваться всеми функциями бота.",
-                parse_mode="HTML"
-            )
-            await callback.message.answer(
-                "Выберите действие:",
-                reply_markup=get_main_keyboard(True)
-            )
+            db.force_approve_user(callback.from_user.id)
+            await callback.message.edit_text("✅ <b>Регистрация завершена!</b>\nВы администратор.", parse_mode="HTML")
+            await callback.message.answer("Меню:", reply_markup=get_main_keyboard(True))
         else:
             await callback.message.edit_text(
-                "✅ <b>Регистрация завершена!</b>\n\n"
-                "Ваша заявка отправлена на рассмотрение администратору.\n"
-                "Вы получите уведомление, когда аккаунт будет подтвержден.",
+                "✅ <b>Заявка отправлена!</b>\nОжидайте подтверждения.", 
                 parse_mode="HTML"
             )
-            
             admins = db.get_all_admins()
-            for admin in admins:
-                try:
-                    await callback.bot.send_message(
-                        admin['telegram_id'],
-                        f"👤 <b>НОВАЯ ЗАЯВКА НА РЕГИСТРАЦИЮ</b>\n\n"
-                        f"🆔 ID: <code>{user['telegram_id']}</code>\n"
-                        f"👤 ФИО: <b>{user['full_name']}</b>\n"
-                        f"📧 Email: {user['email']}\n"
-                        f"📞 Телефон: {user['phone']}\n"
-                        f"💼 Должность: {user['position']}\n\n"
-                        f"Для подтверждения перейдите в '👥 Подтверждение пользователей'",
-                        parse_mode="HTML",
-                        reply_markup=get_user_approval_keyboard(user['id'])
-                    )
-                except:
-                    continue
+            for adm in admins:
+                if adm.get('is_active'):
+                    try:
+                        await callback.bot.send_message(
+                            adm['telegram_id'], 
+                            f"👤 <b>НОВАЯ ЗАЯВКА</b>\n{data['full_name']}\n{data['position']}", 
+                            parse_mode="HTML"
+                        )
+                    except: pass
     else:
-        await callback.answer("❌ Ошибка при регистрации")
-    
-    await callback.answer()
+        await callback.answer("Ошибка регистрации")
 
 @router.callback_query(F.data == "edit_registration")
 async def edit_registration_handler(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_for_full_name)
-    await callback.message.edit_text(
-        "🔄 <b>Начнем регистрацию заново</b>\n\n"
-        "📝 <b>Введите ваше полное ФИО:</b>",
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-@router.message(F.text == "👤 Профиль")
-async def profile_button(message: types.Message, db: FDataBase):
-    await show_profile(message, db)
-
-@router.message(Command("profile"))
-async def show_profile(message: types.Message, db: FDataBase):
-    user = db.get_user(message.from_user.id)
-    
-    if not user:
-        await message.answer("Сначала зарегистрируйтесь через /start")
-        return
-    
-    if user.get('status') != 'approved':
-        await message.answer(
-            "⏳ <b>Ваш аккаунт ожидает подтверждения</b>\n\n"
-            "Администратор проверит ваши данные и активирует аккаунт.\n"
-            "Вы получите уведомление, когда все будет готово.",
-            parse_mode="HTML"
-        )
-        return
-    
-    stats = db.get_user_stats(user['id'])
-    db.update_user_activity(message.from_user.id)
-    
-    status_icon = "✅" if user.get('status') == 'approved' else "⏳"
-    status_text = "Подтвержден" if user.get('status') == 'approved' else "Ожидает подтверждения"
-    
-    text = (
-        "👤 <b>Ваш профиль</b>\n\n"
-        f"{status_icon} <b>Статус:</b> {status_text}\n"
-        f"👤 <b>ФИО:</b> {user['full_name'] or 'Не указано'}\n"
-        f"📧 <b>Email:</b> {user['email'] or 'Не указан'}\n"
-        f"📞 <b>Телефон:</b> {user['phone'] or 'Не указан'}\n"
-        f"💼 <b>Должность:</b> {user['position'] or 'Не указана'}\n"
-        f"📅 <b>Регистрация:</b> {user['registered_at'][:10]}\n\n"
-        f"📊 <b>Статистика:</b>\n"
-        f"• Мероприятий в календаре: {stats.get('total_events', 0)}\n"
-        f"• Высокоприоритетных: {stats.get('high_priority', 0)}"
-    )
-    await message.answer(text, parse_mode="HTML", reply_markup=get_profile_keyboard())
+    await callback.message.edit_text("🔄 Введите ФИО заново:")
 
 @router.message(F.text == "📅 Мероприятия")
-async def show_events(message: types.Message, db: FDataBase):
+async def show_events_menu(message: types.Message):
+    await message.answer("📅 <b>Выберите тип мероприятий:</b>", 
+                        parse_mode="HTML", 
+                        reply_markup=get_events_type_keyboard())
+
+@router.message(F.text == "📋 Основные мероприятия")
+async def show_main_events(message: types.Message, db: FDataBase):
     user = db.get_user(message.from_user.id)
     if not user or user.get('status') != 'approved':
-        await message.answer("⏳ Ваш аккаунт ожидает подтверждения администратором.")
+        await message.answer("⏳ Аккаунт не подтвержден")
         return
-        
-    db.update_user_activity(message.from_user.id)
-    await show_events_page(message, db, 0)
-
-async def show_events_page(message: types.Message, db: FDataBase, page: int):
-    user = db.get_user(message.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await message.answer("⏳ Ваш аккаунт ожидает подтверждения администратором.")
-        return
-        
-    events = db.get_events_paginated(user['telegram_id'], page=page)
-    total_events = db.get_total_approved_events()
-    total_pages = max(1, (total_events + 5 - 1) // 5)
-
-    if not events:
-        await message.answer(
-            "📭 На данный момент нет мероприятий, подходящих для вашей должности.\n\n"
-            "Попробуйте позже или используйте поиск.",
-            parse_mode="HTML"
-        )
-        return
-
-    text = f"📅 <b>Доступные мероприятия (Страница {page + 1}/{total_pages}):</b>\n\n"
-    for i, event in enumerate(events, 1):
-        analysis = json.loads(event['analysis'])
-        priority_icon = "🔥" if event['priority'] == 'high' else "📊"
-        audience = analysis.get('target_audience', 'не указана')
-        text += f"{i}. {priority_icon} <b>{event['title']}</b>\n"
-        text += f"   📅 {event['date_str']} | 📍 {event['location']}\n"
-        text += f"   📊 Оценка: {event['score']}/100 | 👥 {audience[:30]}...\n\n"
-
-    text += "👉 <i>Нажмите на номер кнопки ниже, чтобы открыть подробности и записаться</i>"
     
-    await message.answer(
-        text, 
-        parse_mode="HTML", 
-        reply_markup=get_events_keyboard(events, page, total_pages)
-    )
+    await show_events_page(message, db, 0, 'main')
+
+async def show_events_page(message: types.Message, db: FDataBase, page: int, event_type='main'):
+    if event_type == 'main':
+        events = await asyncio.to_thread(db.get_events_paginated, message.from_user.id, page, 5, None)
+        total = await asyncio.to_thread(db.get_total_approved_events, 'main')
+        title = "📅 Основные мероприятия"
+    elif event_type == 'priority':
+        events = await asyncio.to_thread(db.get_high_priority_events, message.from_user.id)
+        total = len(events) if events else 0
+        page = 0
+        title = "🔥 Приоритетные мероприятия"
+    elif event_type == 'partner':
+        events = await asyncio.to_thread(db.get_partner_events, message.from_user.id)
+        total = len(events) if events else 0
+        page = 0
+        title = "🤝 Партнёрские мероприятия"
+    
+    if not events:
+        await message.answer("📭 Мероприятий пока нет.")
+        return
+
+    text = f"<b>{title}</b>\n\n"
+    for i, event in enumerate(events, 1):
+        icon = "🔥" if event['priority'] == 'high' else "🤝" if event['source'] == 'partner' else "🔵"
+        text += f"{i}. {icon} <b>{event['title']}</b>\n📅 {event['date_str']}\n\n"
+    
+    if event_type in ['priority', 'partner']:
+        kb = get_selection_keyboard(events)
+    else:
+        kb = get_events_keyboard(events, page, max(1, (total + 4) // 5))
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 @router.callback_query(F.data.startswith("page_"))
 async def pagination_handler(callback: types.CallbackQuery, db: FDataBase):
-    user = db.get_user(callback.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await callback.answer("⏳ Аккаунт не подтвержден")
-        return
-        
-    page = int(callback.data.split("_")[1])
     try:
+        page = int(callback.data.split("_")[1])
         await callback.message.delete()
-    except Exception:
-        pass 
-    await show_events_page(callback.message, db, page)
-    await callback.answer()
+        await show_events_page(callback.message, db, page, 'main')
+    except: pass
 
 @router.message(F.text == "🔥 Приоритетные")
-async def show_priority_events(message: types.Message, db: FDataBase):
+async def show_priority(message: types.Message, db: FDataBase):
     user = db.get_user(message.from_user.id)
     if not user or user.get('status') != 'approved':
-        await message.answer("⏳ Ваш аккаунт ожидает подтверждения администратором.")
-        return
-        
-    db.update_user_activity(message.from_user.id)
-        
-    events = db.get_high_priority_events(user['telegram_id'], limit=10) 
-        
-    if not events:
-        await message.answer(
-            "📭 Пока нет высокоприоритетных событий, подходящих для вашей должности.\n\n"
-            "Обычно такие события появляются перед крупными конференциями.",
-            parse_mode="HTML"
-        )
-        return
-
-    text = "🔥 <b>Высокоприоритетные мероприятия</b>\n\n"
-    for i, event in enumerate(events, 1):
-        analysis = json.loads(event['analysis'])
-        audience = analysis.get('target_audience', 'не указана')
-        text += f"{i}. <b>{event['title']}</b>\n"
-        text += f"   📅 {event['date_str']} | 📍 {event['location']}\n"
-        text += f"   📊 Оценка: {event['score']}/100 | 👥 {audience[:30]}...\n\n"
-
-    text += "👉 <i>Нажмите на номер кнопки ниже, чтобы открыть подробности и запросить регистрацию</i>"
-        
-    await message.answer(
-        text, 
-        parse_mode="HTML", 
-        reply_markup=get_selection_keyboard(events)
-    )
-
-@router.message(F.text == "🔍 Поиск мероприятий")
-async def search_events_start(message: types.Message, state: FSMContext, db: FDataBase):
-    user = db.get_user(message.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await message.answer("⏳ Ваш аккаунт ожидает подтверждения администратором.")
-        return
-        
-    db.update_user_activity(message.from_user.id)
-        
-    await state.set_state(UserStates.waiting_for_search_text)
-    await message.answer(
-        "🔍 <b>Поиск мероприятий</b>\n\n"
-        "Введите ключевые слова для поиска:\n"
-        "• Тема (AI, Python, Data Science)\n"
-        "• Тип (конференция, митап, воркшоп)\n"
-        "• Место (СПб, Москва, онлайн)\n\n"
-        "<i>Можно вводить несколько слов через запятую</i>",
-        parse_mode="HTML",
-        reply_markup=get_cancel_keyboard()
-    )
-
-@router.message(UserStates.waiting_for_search_text)
-async def process_search_text(message: types.Message, state: FSMContext, db: FDataBase):
-    if message.text == "❌ Отменить":
-        await state.clear()
-        await message.answer("🔍 Поиск отменен")
-        return
-        
-    keywords = message.text.strip().split(',')
-    keywords = [k.strip() for k in keywords if k.strip()]
-    
-    if not keywords:
-        await message.answer("❌ Введите хотя бы одно ключевое слово:")
-        return
-    
-    user = db.get_user(message.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await state.clear()
         await message.answer("⏳ Аккаунт не подтвержден")
         return
-        
-    events = db.search_events_by_keywords(user['telegram_id'], keywords, limit=20)
     
-    await state.clear() 
-    await show_search_results(message, db, events)
+    await show_events_page(message, db, 0, 'priority')
 
-async def show_search_results(message: types.Message, db: FDataBase, events: List[Dict]):
+@router.message(F.text == "🤝 Партнёрские мероприятия")
+async def show_partner_events(message: types.Message, db: FDataBase):
+    user = db.get_user(message.from_user.id)
+    if not user or user.get('status') != 'approved':
+        await message.answer("⏳ Аккаунт не подтвержден")
+        return
+    
+    await show_events_page(message, db, 0, 'partner')
+
+@router.message(F.text == "🔍 Поиск мероприятий")
+async def search_start(message: types.Message, state: FSMContext, db: FDataBase):
+    user = db.get_user(message.from_user.id)
+    if not user or user.get('status') != 'approved': return
+    
+    await state.set_state(UserStates.waiting_for_search_text)
+    await message.answer("🔍 <b>Введите запрос:</b>\n(тема, спикер или технология)", parse_mode="HTML", reply_markup=get_cancel_keyboard())
+
+@router.message(UserStates.waiting_for_search_text)
+async def search_process(message: types.Message, state: FSMContext, db: FDataBase):
+    if message.text == "❌ Отменить":
+        await state.clear()
+        is_admin = bool(db.get_admin(message.from_user.id))
+        await message.answer("Поиск отменен", reply_markup=get_main_keyboard(is_admin))
+        return
+    
+    wait_msg = await message.answer("⏳ <b>Ищу мероприятия...</b>", parse_mode="HTML")
+    
+    keywords = [k.strip() for k in message.text.split(',') if k.strip()]
+    events = await asyncio.to_thread(db.search_events_by_keywords, message.from_user.id, keywords)
+    
+    await state.clear()
+    await wait_msg.delete()
+    
     if not events:
-        await message.answer(
-            "🔍 <b>По вашему запросу ничего не найдено</b>\n\n"
-            "Попробуйте:\n"
-            "• Изменить ключевые слова\n"
-            "• Использовать более общие запросы\n"
-            "• Проверить позже - мероприятия добавляются регулярно",
-            parse_mode="HTML"
-        )
+        is_admin = bool(db.get_admin(message.from_user.id))
+        await message.answer("🔍 Ничего не найдено.", reply_markup=get_main_keyboard(is_admin))
         return
         
-    text = "🔍 <b>Результаты поиска:</b>\n\n"
-    for i, event in enumerate(events[:10], 1): 
-        priority_icon = "🔥" if event['priority'] == 'high' else "📊"
-        text += f"{i}. {priority_icon} <b>{event['title']}</b>\n"
-        text += f"   📅 {event['date_str']} | 📍 {event['location']}\n"
-        text += f"   📊 Оценка: {event['score']}/100\n\n"
-
-    if len(events) > 10:
-        text += f"\n📎 Показано 10 из {len(events)} мероприятий"
-
+    text = f"🔍 <b>Результаты ({len(events)}):</b>\n\n"
+    for i, event in enumerate(events[:10], 1):
+        text += f"{i}. <b>{event['title']}</b>\n📅 {event['date_str']}\n\n"
+        
     await message.answer(text, parse_mode="HTML", reply_markup=get_selection_keyboard(events[:10]))
+
+@router.message(F.text == "👤 Профиль")
+async def show_profile(message: types.Message, db: FDataBase):
+    user = db.get_user(message.from_user.id)
+    if not user: return
+    
+    stats = await asyncio.to_thread(db.get_user_stats, user['id'])
+    
+    text = (
+        f"👤 <b>Профиль сотрудника</b>\n\n"
+        f"👤 {user['full_name']}\n"
+        f"💼 {user['position']}\n"
+        f"📧 {user['email']}\n\n"
+        f"📅 Мероприятий: <b>{stats.get('total_events', 0)}</b>"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=get_profile_keyboard())
 
 @router.message(F.text == "📅 Мои мероприятия")
 async def show_my_events(message: types.Message, db: FDataBase):
     user = db.get_user(message.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await message.answer("⏳ Ваш аккаунт ожидает подтверждения администратором.")
-        return
-
-    events = db.get_user_events(user['id'])
-    db.update_user_activity(message.from_user.id)
+    if not user: return
+    
+    events = await asyncio.to_thread(db.get_user_events, user['id'])
     
     if not events:
-        await message.answer(
-            "📭 <b>У вас пока нет мероприятий в календаре</b>\n\n"
-            "Чтобы добавить мероприятия:\n"
-            "1. Перейдите в '📅 Мероприятия'\n"
-            "2. Выберите интересующее событие\n"
-            "3. Нажмите '📝 Запросить регистрацию'\n"
-            "4. Дождитесь подтверждения руководителя",
-            parse_mode="HTML"
-        )
+        await message.answer("📭 Вы пока никуда не записаны.")
         return
-
-    approved_events = [e for e in events if e['status'] == 'approved']
-    pending_events = [e for e in events if e['status'] == 'pending']
-    
-    text = "📅 <b>Ваш календарь мероприятий</b>\n\n"
-    
-    if approved_events:
-        text += "✅ <b>Подтвержденные:</b>\n"
-        for i, event in enumerate(approved_events[:5], 1):
-            text += f"{i}. <b>{event['title']}</b>\n"
-            text += f"   📅 {event['date_str']} | 📍 {event['location']}\n"
-            text += f"   🔗 Подтверждено: {event['registration_date'][:10]}\n\n"
-    
-    if pending_events:
-        text += "🕒 <b>Ожидают подтверждения:</b>\n"
-        for i, event in enumerate(pending_events[:5], 1):
-            text += f"{i}. <b>{event['title']}</b>\n"
-            text += f"   📅 {event['date_str']} | 📍 {event['location']}\n\n"
-
-    if len(events) > 10:
-        text += f"\n📎 Всего мероприятий: {len(events)}"
         
-    await message.answer(text, parse_mode="HTML", reply_markup=get_selection_keyboard(events[:10]))
+    text = "📅 <b>Ваши планы:</b>\n\n"
+    for i, event in enumerate(events, 1):
+        status = "✅" if event['status'] == 'approved' else "⏳"
+        text += f"{i}. {status} <b>{event['title']}</b>\n📅 {event['date_str']}\n\n"
+        
+    await message.answer(text, parse_mode="HTML", reply_markup=get_selection_keyboard(events))
 
 @router.message(F.text == "🗂 Экспорт календаря")
-async def export_monthly_events_button(message: types.Message, db: FDataBase):
+async def export_calendar_menu(message: types.Message):
+    await message.answer("🗂 <b>Выберите тип экспорта:</b>", 
+                        parse_mode="HTML", 
+                        reply_markup=get_export_calendar_keyboard())
+
+@router.message(F.text == "📅 Экспорт моих мероприятий")
+async def export_my_events(message: types.Message, db: FDataBase):
     user = db.get_user(message.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await message.answer("⏳ Ваш аккаунт ожидает подтверждения администратором.")
-        return
-        
-    db.update_user_activity(message.from_user.id)
-        
-    events = db.get_upcoming_events(user['telegram_id'], days=31) 
+    if not user: return
+    
+    wait_msg = await message.answer("⏳ <b>Генерирую файл с вашими мероприятиями...</b>", parse_mode="HTML")
+    
+    events = await asyncio.to_thread(db.get_user_events, user['id'])
     
     if not events:
-        await message.answer(
-            "📭 <b>Нет предстоящих мероприятий на следующий месяц</b>\n\n"
-            "Новые мероприятия появляются регулярно.\n"
-            "Попробуйте проверить позже или использовать поиск.",
-            parse_mode="HTML"
-        )
+        await wait_msg.delete()
+        await message.answer("📭 У вас нет записанных мероприятий для экспорта.")
         return
-
-    ics_content = IcsGenerator.generate_bulk_ics(events)
+        
+    file_content = "📅 Ваши мероприятия:\n\n"
+    for i, event in enumerate(events, 1):
+        status = "✅ Подтверждено" if event['status'] == 'approved' else "⏳ Ожидает подтверждения"
+        file_content += f"{i}. {event['title']}\n"
+        file_content += f"   📅 Дата: {event['date_str']}\n"
+        file_content += f"   📍 Место: {event['location']}\n"
+        file_content += f"   📊 Статус: {status}\n"
+        file_content += f"   🔗 Ссылка: {event['url'] or 'Нет'}\n\n"
     
-    file_count = len(events)
-    file_name = f"events_{file_count}_events.ics"
+    file_name = f"my_events_{user['id']}.txt"
+    file = BufferedInputFile(file_content.encode('utf-8'), filename=file_name)
     
-    ics_file = BufferedInputFile(ics_content.encode('utf-8'), filename=file_name)
-    
+    await wait_msg.delete()
     await message.answer_document(
-        ics_file,
-        caption=f"✅ <b>Календарь мероприятий выгружен</b>\n\n"
-                f"📅 Период: ближайшие 31 день\n"
-                f"📋 Событий: <b>{file_count}</b>\n"
-                f"💾 Файл: <code>{file_name}</code>\n\n"
-                f"Импортируйте файл в ваш календарь.",
+        file, 
+        caption=f"✅ <b>Готово!</b>\nФайл содержит {len(events)} ваших мероприятий.",
         parse_mode="HTML"
     )
 
-@router.callback_query(F.data.startswith("event_details_"))
-async def event_details_handler(callback: types.CallbackQuery, db: FDataBase):
-    user = db.get_user(callback.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await callback.answer("⏳ Аккаунт не подтвержден")
+@router.message(F.text == "🗓 Экспорт по периоду")
+async def export_period_menu(message: types.Message):
+    await message.answer("🗓 <b>Выберите период для экспорта:</b>", 
+                        parse_mode="HTML", 
+                        reply_markup=get_export_period_keyboard())
+
+@router.message(F.text.in_(["📅 На неделю", "📅 На месяц", "📅 На 3 месяца", "📅 На год"]))
+async def export_by_period(message: types.Message, db: FDataBase):
+    user = db.get_user(message.from_user.id)
+    if not user: return
+    
+    if message.text == "📅 На неделю":
+        days = 7
+        period_name = "неделю"
+    elif message.text == "📅 На месяц":
+        days = 30
+        period_name = "месяц"
+    elif message.text == "📅 На 3 месяца":
+        days = 90
+        period_name = "3 месяца"
+    else:
+        days = 365
+        period_name = "год"
+    
+    wait_msg = await message.answer(f"⏳ <b>Генерирую календарь на {period_name}...</b>", parse_mode="HTML")
+    
+    events = await asyncio.to_thread(db.get_upcoming_events, user['telegram_id'], days)
+    
+    if not events:
+        await wait_msg.delete()
+        await message.answer(f"📅 Нет мероприятий на ближайшие {period_name}.")
         return
         
-    event_id = int(callback.data.split("_")[2])
-    event = db.get_event_by_id(event_id)
+    ics_content = await asyncio.to_thread(IcsGenerator.generate_bulk_ics, events)
+    file = BufferedInputFile(ics_content.encode('utf-8'), filename=f"events_{days}d.ics")
     
+    await wait_msg.delete()
+    await message.answer_document(
+        file, 
+        caption=f"✅ <b>Готово!</b>\nКалендарь на {period_name} содержит {len(events)} событий.\nИмпортируйте его в Outlook или Google Calendar.",
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data.startswith("export_single_event_"))
+async def export_single_event(callback: types.CallbackQuery, db: FDataBase):
+    try:
+        eid = int(callback.data.split("_")[3])
+    except: 
+        await callback.answer("❌ Ошибка")
+        return
+    
+    event = db.get_event_by_id(eid)
     if not event:
         await callback.answer("❌ Событие не найдено")
         return
-        
+    
+    user = db.get_user(callback.from_user.id)
+    if not user:
+        await callback.answer("❌ Пользователь не найден")
+        return
+    
+    user_events = db.get_user_events(user['id'])
+    is_registered = any(ue['id'] == eid for ue in user_events)
+    
+    if not is_registered:
+        await callback.answer("❌ Вы не записаны на это мероприятие")
+        return
+    
+    wait_msg = await callback.message.answer("⏳ <b>Генерирую файл мероприятия...</b>", parse_mode="HTML")
+    
+    ics_content = await asyncio.to_thread(IcsGenerator.generate_ics, 
+                                         event['title'], 
+                                         event['description'],
+                                         event['location'],
+                                         event['date_str'])
+    
+    file_name = f"{event['title'][:50]}.ics".replace('/', '-')
+    file = BufferedInputFile(ics_content.encode('utf-8'), filename=file_name)
+    
+    await wait_msg.delete()
+    await callback.message.answer_document(
+        file, 
+        caption=f"✅ <b>Готово!</b>\nФайл мероприятия '{event['title']}' создан.\nИмпортируйте его в календарь.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("event_details_"))
+async def event_details(callback: types.CallbackQuery, db: FDataBase):
+    try:
+        eid = int(callback.data.split("_")[2])
+    except: return
+    
+    event = db.get_event_by_id(eid)
+    if not event:
+        await callback.answer("Событие не найдено")
+        return
+    
+    user = db.get_user(callback.from_user.id)
     user_events = db.get_user_events(user['id'])
     
-    registration_status = "none"
-    for e in user_events:
-        if e['id'] == event_id:
-            registration_status = e['status']
+    reg_status = 'none'
+    for ue in user_events:
+        if ue['id'] == eid:
+            reg_status = ue['status']
             break
             
-    user_rank = db._get_user_rank(user['telegram_id'])
-    if event.get('required_rank', 99) > user_rank:
-        await callback.answer("❌ Доступ запрещен по должности")
-        return
+    is_admin = bool(db.get_admin(callback.from_user.id))
+    
+    try:
+        analysis = json.loads(event['analysis'])
+    except:
+        analysis = {}
         
-    analysis = json.loads(event['analysis'])
-    
-    themes = analysis.get('key_themes', [])
-    organizers = analysis.get('organizers', [])
-    level = analysis.get('level', 'не указан')
-    
     text = (
         f"🎯 <b>{event['title']}</b>\n\n"
         f"📅 <b>Дата:</b> {event['date_str']}\n"
         f"📍 <b>Место:</b> {event['location']}\n"
-        f"🏷 <b>Уровень:</b> {level}\n"
-        f"📊 <b>Оценка AI:</b> {event['score']}/100\n\n"
-        f"📝 <b>Описание:</b>\n{event['description'][:400]}...\n\n"
-        f"🔍 <b>Детали:</b>\n"
-        f"• 👥 Аудитория: {analysis.get('target_audience', 'не указана')}\n"
-        f"• 🏷 Темы: {', '.join(themes) if themes else 'не указаны'}\n"
-        f"• 🏢 Организаторы: {', '.join(organizers) if organizers else 'не указаны'}\n"
-        f"• 👥 Участники: {analysis.get('expected_participants', 'не указано')}\n"
-        f"• 📝 Регистрация: {analysis.get('registration_format', 'не указан')}\n"
-        f"• 💰 Оплата: {analysis.get('payment_info', 'не указано')}"
+        f"🔗 <b>Ссылка:</b> {event['url'] or 'Нет'}\n"
+        f"📊 <b>Релевантность:</b> {event['score']}/100\n\n"
+        f"📝 <b>Описание:</b>\n{event['description'][:500]}...\n\n"
+        f"👥 <b>Аудитория:</b> {analysis.get('target_audience', 'Все желающие')}"
     )
-
-    admin = db.get_admin(callback.from_user.id)
-    is_admin = bool(admin)
     
-    keyboard = get_event_detail_keyboard(event_id, event['url'], registration_status, is_admin)
-    
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.message.answer(
+        text, 
+        parse_mode="HTML", 
+        reply_markup=get_event_detail_keyboard(eid, event.get('url', ''), reg_status, is_admin)
+    )
     await callback.answer()
 
 @router.callback_query(F.data.startswith("request_registration_"))
-async def request_registration_handler(callback: types.CallbackQuery, db: FDataBase):
+async def request_reg(callback: types.CallbackQuery, db: FDataBase):
     user = db.get_user(callback.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await callback.answer("⏳ Аккаунт не подтвержден")
-        return
+    eid = int(callback.data.split("_")[2])
     
-    event_id = int(callback.data.split("_")[2])
-    event = db.get_event_by_id(event_id)
+    user_rank = db._get_position_rank(user['position'])
     
-    if not event:
-        await callback.answer("❌ Событие не найдено")
-        return
-
-    user_rank = db._get_user_rank(user['telegram_id'])
-    if event.get('required_rank', 99) > user_rank:
-        await callback.answer("❌ Доступ запрещен по должности")
-        return
-
-    existing_reg = db.get_user_events(user['id'])
-    for reg in existing_reg:
-        if reg['id'] == event_id:
-            if reg['status'] == 'pending':
-                await callback.answer("⏳ Запрос уже отправлен")
-            elif reg['status'] == 'approved':
-                await callback.answer("✅ Вы уже зарегистрированы")
-            return
-
-    if db.add_user_event(user['id'], event_id):
-        await callback.answer("✅ Запрос отправлен руководителю!")
-        
-        manager = db.get_user_manager(user['telegram_id'])
-        if manager and manager['telegram_id'] != user['telegram_id']:
-            try:
-                await callback.bot.send_message(
-                    manager['telegram_id'],
-                    f"🚨 <b>НОВЫЙ ЗАПРОС НА РЕГИСТРАЦИЮ</b>\n\n"
-                    f"👤 <b>Сотрудник:</b> {user['full_name']}\n"
-                    f"💼 <b>Должность:</b> {user.get('position', 'Не указано')}\n"
-                    f"🎯 <b>Мероприятие:</b> {event['title']}\n"
-                    f"📅 <b>Дата:</b> {event['date_str']}\n"
-                    f"📍 <b>Место:</b> {event['location']}\n\n"
-                    f"Для подтверждения используйте кнопки ниже:",
-                    parse_mode="HTML",
-                    reply_markup=get_registration_moderation_keyboard(user['id'], event_id)
-                )
-            except:
-                db.approve_registration(user['id'], event_id)
-                await callback.answer("✅ Регистрация автоматически подтверждена!")
+    if db.add_user_event(user['id'], eid):
+        if user_rank <= 2:
+            await callback.answer("✅ Вы успешно записаны!")
+            db.approve_registration(user['id'], eid)
         else:
-            db.approve_registration(user['id'], event_id)
-            await callback.answer("✅ Регистрация автоматически подтверждена!")
-
-        admin = db.get_admin(callback.from_user.id)
-        is_admin = bool(admin)
-        keyboard = get_event_detail_keyboard(event_id, event['url'], 'pending', is_admin)
-        try:
-            await callback.message.edit_reply_markup(reply_markup=keyboard)
-        except:
-            pass 
+            await callback.answer("⏳ Заявка отправлена на подтверждение руководителю")
+            manager = db.get_user_manager(user['telegram_id'])
+            if manager:
+                try:
+                    await callback.bot.send_message(
+                        manager['telegram_id'],
+                        f"📝 <b>ЗАПРОС НА РЕГИСТРАЦИЮ</b>\n\n"
+                        f"👤 Сотрудник: {user['full_name']}\n"
+                        f"💼 Должность: {user['position']}\n"
+                        f"📅 Мероприятие: {db.get_event_by_id(eid)['title']}\n\n"
+                        f"✅ /approve_reg_{user['id']}_{eid}\n"
+                        f"❌ /reject_reg_{user['id']}_{eid}",
+                        parse_mode="HTML"
+                    )
+                except: pass
         
+        event = db.get_event_by_id(eid)
+        is_admin = bool(db.get_admin(callback.from_user.id))
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=get_event_detail_keyboard(eid, event['url'], 'pending', is_admin)
+            )
+        except: pass
     else:
-        await callback.answer("❌ Ошибка при отправке запроса")
+        await callback.answer("⚠️ Вы уже записаны или заявка на рассмотрении")
 
-@router.callback_query(F.data == "pending_status_info")
-async def pending_status_info_handler(callback: types.CallbackQuery):
-    await callback.answer("Ваш запрос находится на рассмотрении у руководителя")
+@router.message(lambda msg: msg.text and msg.text.startswith("/approve_reg_"))
+async def approve_registration_cmd(message: types.Message, db: FDataBase):
+    try:
+        parts = message.text.split("_")
+        user_id = int(parts[2])
+        event_id = int(parts[3])
+        
+        if db.approve_registration(user_id, event_id):
+            user = db.get_user_by_id(user_id)
+            event = db.get_event_by_id(event_id)
+            
+            await message.answer("✅ Регистрация подтверждена")
+            
+            if user:
+                try:
+                    await message.bot.send_message(
+                        user['telegram_id'],
+                        f"✅ <b>Ваша регистрация подтверждена!</b>\n\n"
+                        f"📅 Мероприятие: {event['title']}\n"
+                        f"📅 Дата: {event['date_str']}",
+                        parse_mode="HTML"
+                    )
+                except: pass
+        else:
+            await message.answer("❌ Ошибка подтверждения")
+    except:
+        await message.answer("❌ Неверный формат команды")
+
+@router.message(lambda msg: msg.text and msg.text.startswith("/reject_reg_"))
+async def reject_registration_cmd(message: types.Message, db: FDataBase):
+    try:
+        parts = message.text.split("_")
+        user_id = int(parts[2])
+        event_id = int(parts[3])
+        
+        if db.reject_registration(user_id, event_id):
+            user = db.get_user_by_id(user_id)
+            event = db.get_event_by_id(event_id)
+            
+            await message.answer("❌ Регистрация отклонена")
+            
+            if user:
+                try:
+                    await message.bot.send_message(
+                        user['telegram_id'],
+                        f"❌ <b>Ваша регистрация отклонена руководителем</b>\n\n"
+                        f"📅 Мероприятие: {event['title']}\n"
+                        f"📅 Дата: {event['date_str']}",
+                        parse_mode="HTML"
+                    )
+                except: pass
+        else:
+            await message.answer("❌ Ошибка отклонения")
+    except:
+        await message.answer("❌ Неверный формат команды")
 
 @router.callback_query(F.data.startswith("remove_from_calendar_"))
-async def remove_from_calendar_handler(callback: types.CallbackQuery, db: FDataBase):
+async def remove_reg(callback: types.CallbackQuery, db: FDataBase):
     user = db.get_user(callback.from_user.id)
-    if not user or user.get('status') != 'approved':
-        await callback.answer("⏳ Аккаунт не подтвержден")
-        return
-        
-    event_id = int(callback.data.split("_")[3])
-    db.remove_user_event(user['id'], event_id)
+    eid = int(callback.data.split("_")[3])
     
-    event = db.get_event_by_id(event_id)
-    admin = db.get_admin(callback.from_user.id)
-    is_admin = bool(admin)
-    keyboard = get_event_detail_keyboard(event_id, event['url'], 'none', is_admin)
-    
-    try:
-        await callback.message.edit_reply_markup(reply_markup=keyboard)
-    except:
-        pass 
+    if db.remove_user_event(user['id'], eid):
+        await callback.answer("🗑 Запись отменена")
         
-    await callback.answer("🗑 Удалено из календаря")
+        event = db.get_event_by_id(eid)
+        is_admin = bool(db.get_admin(callback.from_user.id))
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=get_event_detail_keyboard(eid, event['url'], 'none', is_admin)
+            )
+        except: pass
+    else:
+        await callback.answer("Ошибка удаления")
+
+@router.callback_query(F.data == "pending_status_info")
+async def pending_info(callback: types.CallbackQuery):
+    await callback.answer("Ваша заявка находится на рассмотрении у руководителя.", show_alert=True)
 
 @router.callback_query(F.data == "close_message")
-async def close_message_handler(callback: types.CallbackQuery):
-    try:
-        await callback.message.delete()
-    except:
-        pass
+async def close_msg(callback: types.CallbackQuery):
+    try: await callback.message.delete()
+    except: pass
     await callback.answer()
 
 @router.callback_query(F.data == "close_profile")
-async def close_profile_handler(callback: types.CallbackQuery):
-    try:
-        await callback.message.delete()
-    except:
-        pass
+async def close_prof(callback: types.CallbackQuery):
+    try: await callback.message.delete()
+    except: pass
     await callback.answer()
+
+@router.message(F.text == "⬅️ Главное меню")
+async def back_to_main_menu(message: types.Message, db: FDataBase):
+    admin = db.get_admin(message.from_user.id)
+    is_admin = bool(admin)
+    await message.answer(
+        "🔙 <b>Главное меню</b>",
+        reply_markup=get_main_keyboard(is_admin),
+        parse_mode="HTML"
+    )
+
+@router.message(F.text == "⬅️ Назад к экспорту")
+async def back_to_export(message: types.Message):
+    await export_calendar_menu(message)
