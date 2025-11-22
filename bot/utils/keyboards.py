@@ -74,8 +74,7 @@ def get_sources_mgmt_kb():
 
 def get_users_mgmt_kb():
     btns = [
-        [KeyboardButton(text="✅ Подтверждение (Модерация)"), KeyboardButton(text="📋 Список пользователей")],
-        [KeyboardButton(text="📋 Список сотрудников"), KeyboardButton(text="📝 Управление ролями")],
+        [KeyboardButton(text="✅ Подтверждение (Модерация)"), KeyboardButton(text="📋 Список сотрудников")],
         [KeyboardButton(text="📝 Модерация регистраций"), KeyboardButton(text="⬅️ Назад в админку")]
     ]
     return ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True)
@@ -464,3 +463,37 @@ def get_parsing_filters_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text="🎓 Образовательные"), KeyboardButton(text="👨‍💻 Технические")],
         [KeyboardButton(text="🔍 Все темы"), KeyboardButton(text="❌ Отменить")]
     ], resize_keyboard=True)
+    
+def get_user_edit_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✏️ Изм. ФИО", callback_data=f"edit_usr_name_{user_id}"),
+            InlineKeyboardButton(text="✏️ Изм. Email", callback_data=f"edit_usr_email_{user_id}")
+        ],
+        [
+            InlineKeyboardButton(text="💼 Изм. Должность", callback_data=f"edit_usr_pos_{user_id}"),
+            InlineKeyboardButton(text="🗑 Удалить сотрудника", callback_data=f"delete_usr_{user_id}")
+        ],
+        [InlineKeyboardButton(text="⬅️ К списку", callback_data="back_to_users_list_0")]
+    ])
+
+def get_employees_list_keyboard(users, current_page: int, total_pages: int) -> InlineKeyboardMarkup:
+    buttons = []
+    for user in users:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"👤 {user['full_name']} | {user['position']}",
+                callback_data=f"manage_user_{user['id']}"
+            )
+        ])
+    
+    nav = []
+    if current_page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"users_list_prev_{current_page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{current_page + 1}/{total_pages}", callback_data="ignore"))
+    if current_page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"users_list_next_{current_page + 1}"))
+    
+    if nav: buttons.append(nav)
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)

@@ -156,13 +156,21 @@ class FDataBase:
             return True
         except: return False
 
-    def update_user_profile(self, telegram_id: int, **kwargs) -> bool:
+    def update_user_profile(self, telegram_id: int = None, user_id: int = None, **kwargs) -> bool:
         if not kwargs: return False
         columns = ", ".join([f"{k} = ?" for k in kwargs.keys()])
         values = list(kwargs.values())
-        values.append(telegram_id)
+        
         try:
-            self.__cur.execute(f"UPDATE users SET {columns} WHERE telegram_id = ?", values)
+            if user_id:
+                values.append(user_id)
+                self.__cur.execute(f"UPDATE users SET {columns} WHERE id = ?", values)
+            elif telegram_id:
+                values.append(telegram_id)
+                self.__cur.execute(f"UPDATE users SET {columns} WHERE telegram_id = ?", values)
+            else:
+                return False
+                
             self.__db.commit()
             return True
         except: return False

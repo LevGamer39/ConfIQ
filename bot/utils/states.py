@@ -34,6 +34,10 @@ class AdminStates(StatesGroup):
     waiting_for_source_name = State()
     waiting_for_source_url = State()
     waiting_for_delete_source_id = State()
+    
+    waiting_for_edit_user_name = State()
+    waiting_for_edit_user_email = State()
+    waiting_for_edit_user_pos = State()
 
 class UserStates(StatesGroup):
     waiting_for_full_name = State()

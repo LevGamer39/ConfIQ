@@ -510,25 +510,31 @@ async def approve_single_user(c: types.CallbackQuery, db: FDataBase):
         
         if user and event:
             try:
-                ics_content = await asyncio.to_thread(IcsGenerator.generate_ics, 
-                                                     event['title'], 
-                                                     event['description'],
-                                                     event['location'],
-                                                     event['date_str'])
-                file_name = f"{event['title'][:50]}.ics".replace('/', '-')
+                ics_content = await asyncio.to_thread(
+                    IcsGenerator.generate_ics, 
+                    event['title'], 
+                    event['description'] or "Описание отсутствует",
+                    event['location'] or "Онлайн/Не указано",
+                    event['date_str']
+                )
+                file_name = f"invite_{event['id']}.ics"
                 file = BufferedInputFile(ics_content.encode('utf-8'), filename=file_name)
                 
                 await c.bot.send_document(
                     user['telegram_id'],
                     document=file,
-                    caption=f"✅ <b>Ваша регистрация подтверждена!</b>\n\n🎯 <b>{event['title']}</b>\n📅 {event['date_str']}",
+                    caption=(
+                        f"✅ <b>Ваша регистрация подтверждена администратором!</b>\n\n"
+                        f"🎯 <b>{event['title']}</b>\n"
+                        f"📅 {event['date_str']}\n\n"
+                        f"Файл для календаря прикреплен 📎"
+                    ),
                     parse_mode="HTML"
                 )
             except Exception as e:
-                pass
-        
-        await c.answer(f"✅ {user['full_name']} подтвержден")
-        
+                print(f"Ошибка отправки ICS пользователю {user['telegram_id']}: {e}")
+
+        await c.answer(f"✅ {user['full_name']} подтвержден и уведомлен")
         await update_registrations_view(c, db, event_id)
     else:
         await c.answer("❌ Ошибка подтверждения")
@@ -641,28 +647,39 @@ async def bulk_approve_handler(c: types.CallbackQuery, db: FDataBase):
     if not admin: return
     
     event_id = int(c.data.split("_")[2])
+
     approved_users = await asyncio.to_thread(db.approve_all_event_registrations, event_id)
+    
     await c.answer(f"✅ Утверждено записей: {len(approved_users)}")
     
-    for u in approved_users:
-        try:
-            event = db.get_event_by_id(event_id)
-            if event:
-                ics_content = await asyncio.to_thread(IcsGenerator.generate_ics, 
-                                                     event['title'], 
-                                                     event['description'],
-                                                     event['location'],
-                                                     event['date_str'])
-                file_name = f"{event['title'][:50]}.ics".replace('/', '-')
-                file = BufferedInputFile(ics_content.encode('utf-8'), filename=file_name)
-                
-                await c.bot.send_document(
-                    u['telegram_id'],
-                    document=file,
-                    caption=f"✅ <b>Ваша регистрация подтверждена!</b>\n\n🎯 <b>{event['title']}</b>\n📅 {event['date_str']}",
-                    parse_mode="HTML"
+    if approved_users:
+        event = db.get_event_by_id(event_id)
+        if event:
+            try:
+                ics_content = await asyncio.to_thread(
+                    IcsGenerator.generate_ics, 
+                    event['title'], 
+                    event['description'] or "",
+                    event['location'] or "",
+                    event['date_str']
                 )
-        except: pass
+                file_name = f"invite_{event['id']}.ics"
+                
+                for u in approved_users:
+                    try:
+                        file = BufferedInputFile(ics_content.encode('utf-8'), filename=file_name)
+                        
+                        await c.bot.send_document(
+                            u['telegram_id'],
+                            document=file,
+                            caption=f"✅ <b>Ваша заявка подтверждена!</b>\n\n🎯 <b>{event['title']}</b>",
+                            parse_mode="HTML"
+                        )
+                        await asyncio.sleep(0.1) 
+                    except Exception as e:
+                        print(f"Не удалось отправить файл юзеру {u.get('telegram_id')}: {e}")
+            except Exception as e:
+                print(f"Ошибка генерации ICS для рассылки: {e}")
         
     await c.message.delete()
     await show_pending_registrations_list(c.message, db, 0)
@@ -1597,32 +1614,45 @@ async def show_reg_moderation_page(message: types.Message, db: FDataBase, page: 
 async def reg_approve_handler(callback: types.CallbackQuery, db: FDataBase):
     admin = check_callback_access(callback, db)
     if not admin: return
+    
     parts = callback.data.split("_")
     user_id = int(parts[2])
     event_id = int(parts[3])
+    
     if db.approve_registration(user_id, event_id):
         user = db.get_user_by_id(user_id)
         event = db.get_event_by_id(event_id)
+        
         if user and event:
             try:
-                ics_content = await asyncio.to_thread(IcsGenerator.generate_ics, 
-                                                     event['title'], 
-                                                     event['description'],
-                                                     event['location'],
-                                                     event['date_str'])
-                file_name = f"{event['title'][:50]}.ics".replace('/', '-')
+                ics_content = await asyncio.to_thread(
+                    IcsGenerator.generate_ics, 
+                    event['title'], 
+                    event['description'] or "Описание отсутствует",
+                    event['location'] or "Онлайн/Не указано",
+                    event['date_str']
+                )
+                file_name = f"invite_{event['id']}.ics"
                 file = BufferedInputFile(ics_content.encode('utf-8'), filename=file_name)
                 
                 await callback.bot.send_document(
                     user.get('telegram_id'),
                     document=file,
-                    caption=f"✅ <b>Регистрация на мероприятие подтверждена!</b>\n\n🎯 <b>{event.get('title')}</b>",
+                    caption=(
+                        f"✅ <b>Руководитель подтвердил вашу заявку!</b>\n\n"
+                        f"🎯 <b>{event.get('title')}</b>\n"
+                        f"📅 {event.get('date_str')}\n\n"
+                        f"Добавьте событие в календарь 👇"
+                    ),
                     parse_mode="HTML"
                 )
-            except: pass
+            except Exception as e:
+                print(f"Ошибка отправки ICS: {e}")
+
         await callback.answer("✅ Регистрация подтверждена")
     else:
-        await callback.answer("❌ Ошибка")
+        await callback.answer("❌ Ошибка базы данных")
+        
     await callback.message.delete()
     await show_reg_moderation_page(callback.message, db, 0)
 
@@ -1890,3 +1920,148 @@ async def close_prof(callback: types.CallbackQuery, db: FDataBase):
         parse_mode="HTML"
     )
     await callback.answer()
+
+# --- УПРАВЛЕНИЕ СПИСКОМ СОТРУДНИКОВ ---
+
+@router.message(lambda msg: msg.text == "📋 Список сотрудников")
+async def list_employees_handler(message: types.Message, db: FDataBase):
+    admin = check_access(message, db)
+    if not admin: return
+    await show_employees_list(message, db, 0)
+
+async def show_employees_list(message: types.Message, db: FDataBase, page: int):
+    # Получаем всех подтвержденных пользователей пагинацией
+    # Примечание: нужно реализовать/использовать метод пагинации пользователей в БД.
+    # Сейчас используем get_all_approved_users и режем список вручную (можно оптимизировать SQL позже)
+    all_users = await asyncio.to_thread(db.get_all_approved_users)
+    
+    limit = 7
+    total_pages = max(1, (len(all_users) + limit - 1) // limit)
+    page = min(page, total_pages - 1)
+    start = page * limit
+    end = start + limit
+    current_users = all_users[start:end]
+    
+    text = f"📋 <b>Список сотрудников</b> ({page + 1}/{total_pages})\nВсего: {len(all_users)}\n\nВыберите сотрудника для редактирования:"
+    
+    kb = get_employees_list_keyboard(current_users, page, total_pages)
+    
+    if isinstance(message, types.Message):
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data.startswith("users_list_prev_"))
+async def users_list_prev(c: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(c, db): return
+    page = int(c.data.split("_")[3])
+    await show_employees_list(c.message, db, page)
+
+@router.callback_query(F.data.startswith("users_list_next_"))
+async def users_list_next(c: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(c, db): return
+    page = int(c.data.split("_")[3])
+    await show_employees_list(c.message, db, page)
+
+@router.callback_query(F.data == "back_to_users_list_0")
+async def back_users_list(c: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(c, db): return
+    await show_employees_list(c.message, db, 0)
+
+# --- КАРТОЧКА СОТРУДНИКА ---
+
+@router.callback_query(F.data.startswith("manage_user_"))
+async def manage_user_detail(c: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(c, db): return
+    user_id = int(c.data.split("_")[2])
+    user = db.get_user_by_id(user_id)
+    
+    if not user:
+        await c.answer("Пользователь не найден", show_alert=True)
+        return
+
+    stats = await asyncio.to_thread(db.get_user_stats, user_id)
+    
+    text = (
+        f"👤 <b>Профиль сотрудника</b>\n\n"
+        f"🆔 ID: {user['id']}\n"
+        f"📝 <b>ФИО:</b> {user['full_name']}\n"
+        f"💼 <b>Должность:</b> {user['position']} (Rank: {db._get_position_rank(user['position'])})\n"
+        f"📧 <b>Email:</b> {user.get('email', '-')}\n"
+        f"📞 <b>Телефон:</b> {user.get('phone', '-')}\n"
+        f"📊 <b>Записей на мероприятия:</b> {stats.get('total_events', 0)}"
+    )
+    
+    await c.message.edit_text(text, parse_mode="HTML", reply_markup=get_user_edit_keyboard(user_id))
+
+# --- РЕДАКТИРОВАНИЕ ---
+
+# 1. ФИО
+@router.callback_query(F.data.startswith("edit_usr_name_"))
+async def edit_usr_name_start(c: types.CallbackQuery, state: FSMContext, db: FDataBase):
+    if not check_callback_access(c, db): return
+    user_id = int(c.data.split("_")[3])
+    await state.update_data(edit_user_id=user_id)
+    await state.set_state(AdminStates.waiting_for_edit_user_name)
+    await c.message.answer("Введите новое ФИО сотрудника:", reply_markup=get_cancel_keyboard())
+    await c.answer()
+
+@router.message(AdminStates.waiting_for_edit_user_name)
+async def edit_usr_name_process(m: types.Message, state: FSMContext, db: FDataBase):
+    if m.text == "❌ Отменить": 
+        await handle_cancel(m, state, db, get_users_mgmt_kb())
+        return
+    data = await state.get_data()
+    db.update_user_profile(data['edit_user_id'], full_name=m.text)
+    await m.answer("✅ ФИО обновлено!", reply_markup=get_users_mgmt_kb())
+    await state.clear()
+
+# 2. Email
+@router.callback_query(F.data.startswith("edit_usr_email_"))
+async def edit_usr_email_start(c: types.CallbackQuery, state: FSMContext, db: FDataBase):
+    if not check_callback_access(c, db): return
+    user_id = int(c.data.split("_")[3])
+    await state.update_data(edit_user_id=user_id)
+    await state.set_state(AdminStates.waiting_for_edit_user_email)
+    await c.message.answer("Введите новый Email:", reply_markup=get_cancel_keyboard())
+    await c.answer()
+
+@router.message(AdminStates.waiting_for_edit_user_email)
+async def edit_usr_email_process(m: types.Message, state: FSMContext, db: FDataBase):
+    if m.text == "❌ Отменить": 
+        await handle_cancel(m, state, db, get_users_mgmt_kb())
+        return
+    data = await state.get_data()
+    db.update_user_profile(data['edit_user_id'], email=m.text)
+    await m.answer("✅ Email обновлен!", reply_markup=get_users_mgmt_kb())
+    await state.clear()
+
+# 3. Должность
+@router.callback_query(F.data.startswith("edit_usr_pos_"))
+async def edit_usr_pos_start(c: types.CallbackQuery, state: FSMContext, db: FDataBase):
+    if not check_callback_access(c, db): return
+    user_id = int(c.data.split("_")[3])
+    await state.update_data(edit_user_id=user_id)
+    await state.set_state(AdminStates.waiting_for_edit_user_pos)
+    await c.message.answer("Выберите или введите новую должность:", reply_markup=get_position_keyboard())
+    await c.answer()
+
+@router.message(AdminStates.waiting_for_edit_user_pos)
+async def edit_usr_pos_process(m: types.Message, state: FSMContext, db: FDataBase):
+    if m.text == "❌ Отменить": 
+        await handle_cancel(m, state, db, get_users_mgmt_kb())
+        return
+    data = await state.get_data()
+    db.update_user_profile(data['edit_user_id'], position=m.text)
+    await m.answer("✅ Должность обновлена!", reply_markup=get_users_mgmt_kb())
+    await state.clear()
+
+# 4. Удаление
+@router.callback_query(F.data.startswith("delete_usr_"))
+async def delete_usr_handler(c: types.CallbackQuery, db: FDataBase):
+    if not check_callback_access(c, db): return
+    user_id = int(c.data.split("_")[2])
+    # Используем reject_user как удаление
+    db.reject_user(user_id) 
+    await c.answer("🗑 Сотрудник удален из базы", show_alert=True)
+    await show_employees_list(c.message, db, 0)

@@ -621,8 +621,8 @@ async def request_reg(callback: types.CallbackQuery, db: FDataBase):
     user_rank = db._get_position_rank(user['position'])
     
     if db.add_user_event(user['id'], eid):
-        if user_rank <= 2:
-            await callback.answer("✅ Вы успешно записаны!")
+        if user_rank >= 3:
+            await callback.answer("✅ Вы успешно записаны (Автоподтверждение)!")
             db.approve_registration(user['id'], eid)
             
             event = db.get_event_by_id(eid)
@@ -646,6 +646,11 @@ async def request_reg(callback: types.CallbackQuery, db: FDataBase):
         else:
             await callback.answer("⏳ Заявка отправлена на подтверждение руководителю")
             manager = db.get_user_manager(user['telegram_id'])
+
+            if not manager:
+                 admins = db.get_all_admins()
+                 if admins: manager = admins[0]
+
             if manager:
                 try:
                     event = db.get_event_by_id(eid)
@@ -657,8 +662,7 @@ async def request_reg(callback: types.CallbackQuery, db: FDataBase):
                         f"📧 <b>Email:</b> {user['email']}\n"
                         f"📞 <b>Телефон:</b> {user['phone']}\n\n"
                         f"🎯 <b>Мероприятие:</b> {event['title']}\n"
-                        f"📅 <b>Дата:</b> {event['date_str']}\n"
-                        f"📍 <b>Место:</b> {event['location']}\n\n"
+                        f"📅 <b>Дата:</b> {event['date_str']}\n\n"
                         f"Для подтверждения перейдите в раздел '📝 Модерация регистраций'",
                         parse_mode="HTML",
                         reply_markup=get_admin_main_kb(manager['role'])
@@ -668,8 +672,9 @@ async def request_reg(callback: types.CallbackQuery, db: FDataBase):
         event = db.get_event_by_id(eid)
         is_admin = bool(db.get_admin(callback.from_user.id))
         try:
+            status_display = 'approved' if user_rank >= 3 else 'pending'
             await callback.message.edit_reply_markup(
-                reply_markup=get_event_detail_keyboard(eid, event['url'], 'pending', is_admin)
+                reply_markup=get_event_detail_keyboard(eid, event['url'], status_display, is_admin)
             )
         except: pass
     else:
