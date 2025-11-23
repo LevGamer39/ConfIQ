@@ -885,24 +885,36 @@ async def manage_events_menu(message: types.Message, db: FDataBase):
     
     await message.answer("📝 <b>Меню мероприятий</b>", reply_markup=get_events_mgmt_kb(admin.get('role')), parse_mode="HTML")
 
-@router.message(lambda msg: msg.text == "📂 Экспорт всех (CSV)")
+@router.message(F.text == "📂 Экспорт всех (CSV)")
 async def export_all_events_handler(message: types.Message, db: FDataBase):
     admin = check_access(message, db)
     if not admin: return
     
     events = await asyncio.to_thread(db.get_all_events_for_export)
+    
     if not events:
         await message.answer("Нет событий для экспорта.")
         return
         
     output = io.StringIO()
     writer = csv.writer(output)
+    
     writer.writerow(['ID', 'Title', 'Date', 'Location', 'URL', 'Status', 'Source'])
     
     for e in events:
-        writer.writerow([e['id'], e['title'], e['date_str'], e['location'], e['url'], e['status'], e['source']])
-        
-    file = BufferedInputFile(output.getvalue().encode('utf-8'), filename="all_events.csv")
+        writer.writerow([
+            e['id'], 
+            e['title'], 
+            e['date_str'], 
+            e['location'], 
+            e['url'], 
+            e['status'], 
+            e['source']
+        ])
+    
+    csv_content = output.getvalue().encode('utf-8-sig')
+    
+    file = BufferedInputFile(csv_content, filename="all_events.csv")
     await message.answer_document(file, caption=f"✅ Экспорт {len(events)} событий")
 
 @router.message(lambda msg: msg.text == "👥 Управление пользователями")
@@ -1067,7 +1079,7 @@ async def process_file_upload(message: types.Message, state: FSMContext, db: FDa
         await state.clear()
         await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=get_events_mgmt_kb())
 
-@router.message(lambda msg: msg.text == "📋 Список всех")
+@router.message(F.text == "📋 Список всех мероприятий")
 async def list_all_events(message: types.Message, db: FDataBase):
     admin = check_access(message, db)
     if not admin: return
