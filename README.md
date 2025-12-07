@@ -1,4 +1,4 @@
-# 📅 Eventpedia — AI Media Agent
+# 📅 ConfIQ — AI Media Agent
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![Aiogram](https://img.shields.io/badge/Aiogram-3.x-blue)
@@ -48,7 +48,7 @@
 
 ### 1. Клонирование репозитория
 ```bash
-git clone https://github.com/LevGamer39/Eventpedia.git
+git clone https://github.com/LevGamer39/ConfIQ.git
 cd Eventpedia/bot
 ````
 
@@ -79,7 +79,7 @@ python main.py
 ## 📂 Структура проекта
 
 ```text
-📁 Eventpedia/
+📁 ConfIQ/
 ├── 📄 README.md               # Документация проекта
 ├── 📄 LICENSE                 # Лицензия
 └── 📁 bot/                    # Исходный код бота
