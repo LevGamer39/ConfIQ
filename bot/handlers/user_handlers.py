@@ -30,7 +30,7 @@ async def start(message: types.Message, db: FDataBase, state: FSMContext):
         db.update_user_activity(message.from_user.id)
         is_admin = bool(admin)
         await message.answer(
-            "👋 <b>Добро пожаловать в Eventpedia!</b>\n\n"
+            "👋 <b>Добро пожаловать в ConfIQ!</b>\n\n"
             "Здесь вы найдете актуальные IT-мероприятия, сможете записаться на них и добавить в свой календарь.",
             reply_markup=get_main_keyboard(is_admin),
             parse_mode="HTML"
