@@ -1,7 +1,7 @@
 from secret import BOT_TOKEN, GIGACHAT_API_KEY
 
 BOT_CONFIG = {
-    'admin_ids': [5159491775],
+    'admin_ids': [your_id],
 }
 
 EVENT_CRITERIA = {
