@@ -113,7 +113,7 @@ async def main():
         if OWNER_ID != 0:
             admin_data = db.get_admin(OWNER_ID)
             if not admin_data:
-                db.add_admin(OWNER_ID, "Owner", "TechSupport") # Владелец как ТехПоддержка
+                db.add_admin(OWNER_ID, "Owner", "TechSupport")
                 logger.info(f"✅ Owner {OWNER_ID} added as TechSupport")
                 
             user_data = db.get_user(OWNER_ID)
